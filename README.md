@@ -100,12 +100,59 @@ NCBI para ver a qué organimos estamos analizando.
 La consulta nos dice que estos organismos pertenecen a la taxa:  
 [Sporothrix globosa](https://www.ncbi.nlm.nih.gov/datasets/genome/GCA_001630435.1/) y [Paecilomyces niveus](https://www.ncbi.nlm.nih.gov/datasets/genome/GCA_003116535.1/) respectivamente, ambos son hongos. 
 De ahora en adelante nos referiremos a ellas como 
-****S. globosa*** y ***P. niveus***.
+***S. globosa*** y ***P. niveus***.
 
 Estimamos que *S. globosa* tiene 180 contigs con longitud media de 175kbp (base pairs) y *P. niveus*, 330 con 110kbp.
 La comparación que hará *blast* será comparar los 180 contigs del primero con los 330 del segundo. Esto nos da, al menos 59400 comparaciones. Sabemos que el mejor algoritmo de comparación de strings utiliza $\Theta(\min\{m,n\})$ siendo m y n la longitud de las cadenas a comparar.
 
-Solamente esta comparación podría haber comparado (aunque los algorimos de strings no cuentan las comparaciones así) **5.94 billones de bp.**. Basandome en los logs generados al momento de ejecutar orthofinder, el tiempo total transcurrido para estas dos secuencias fué de 7 min. Pero un problema más grande es la cantidad de GPU que consume, siendo este el principal obstáculo para ejecutar más análisis.
+Solamente esta comparación podría haber comparado (aunque los algorimos de strings no cuentan las comparaciones así) **5.94 billones de bp**. Basandome en los logs generados al momento de ejecutar orthofinder, el tiempo total transcurrido para estas dos secuencias fué de 7 min. Pero un problema más grande es la cantidad de GPU que consume, siendo este el principal obstáculo para ejecutar más análisis.
+
+
+> Recapitulando, la respuesta a la primera pregunta de investigación es que solo las secuencias de *S. globosa* y *P. niveus* son aptas para el análisis.
+
+Entonces, siguiendo con el análisis, podemos visualizar los orthogroups que hallamos, los resultados que utilizaremos se encuentran en ```Orthogroups_SingleCopyOrthologues.txt``` y ```Orthogroups.tsv```.
+
+El primer archivo tiene la información de ortólogos 1 a 1, esto significa que hay un orthologo en cada genoma, se eligió estos porque son los que apuntan a una separación genética más reciente, a diferencia de otros grupos de ortólogos que podrían haberse separado hace más tiempo. 
+
+Después de hacer un inner join, graficamos los ortologs resultantes utilizando UMAP con los 4-kmers (grupos de 4 nucleótidos) para ver las relaciones que tienen. 
+
+![fig5](assets/fig3.png)
+**Figura 5:** Visualización con UMAP (ampliamente utilizado por la comunidad científica para ver relaciones entre genomas)
+
+Observamos que los genes de una especie se mantienen agrupados y que los demás están separados, esto sugiere que sí hubo una correcta separación por parte de *OrthoFinder*.
+
+Esto nos permite responder a las pregunta de investigación 
+
+> La visualización sugiere que los genes fueron correctamente clasificados
+
+> Las relaciones significativas son las de los orthologs 1v1 o single-copy orthologs
+
+
+Para añadir una forma más de verificación, podríamos añadir un MSA (Multi-sequence alignment). Los resultados de aqui deberían también coincidir. Para esto utilizaremos MAFFT.
+
+Para visualizar el alineamiento, usaremos [AlignmentViewer](https://alignmentviewer.org/). Ovsebamos que hay un 0.9% de gaps, que es un buen indicador 
+
+> Las secuencias también coinciden en el alineamiento
+
+
+Finalmente, podemos ver si algún ortholog aqui cumple funciones importantes, tomaremos por ejemplo, el primero del organismo *S. globosa*. Para esto usaremos la herramienta online llamada BLASTn, que recibe nucleótidos por input y devuelve similitudes encontradas en diversas bases de datos, así como literatura asociada al query.
+Al correr esto, tenemos las siguientes respuestas.
+
+![blast_out](assets/blast_out.png)
+
+
+El ***E-value*** es la métrica más importante para considerar un alineamiento correcto, esto indica cuántas alineamientos en promedio tendrán un score igual o mejor del observado. Otras métricas serán explicadas en la presentación.
+
+
+
+
+
+
+
+
+
+
+
 
 
 
