@@ -32,11 +32,16 @@ Todos los binarios deben estar disponibles, de preferencia, en ```/usr/local/bin
 
 ## Research Questions
 
-- ¿Cuales secuencias son válidas para el análisis?
-- ¿Cuál es y cómo se ve la relación entre las secuencias? (Orthogroups)
-- ¿Qué relaciones son significativas? (Orthologs 1v1)
-- ¿Los resultados generados son realmente válidos? (MSA)
-- ¿Qué función cumplen estos grupos? ¿Es esta función importante?
+- ¿Qué desafíos metodológicos afectan el análisis de secuencias genómicas y cómo se pueden abordar?
+    + ¿Cuales secuencias son válidas para el análisis?
+    + ¿Qué limitaciones computacionales impactan la escala del análisis genómico?
+    + ¿Cómo afectan la longitud de la secuencia y la distribución de los contigs la viabilidad del análisis?
+- ¿Cómo se pueden identificar y validar eficazmente las relaciones evolutivas entre especies? 
+    + ¿Qué revela la estructura de relación entre secuencias a través del análisis de Orthogroups? 
+    + ¿Qué relaciones evolutivas demuestran significancia estadística? (Orthologs 1v1)
+    + ¿Cómo pueden múltiples enfoques de validación confirmar la precisión de las relaciones identificadas? (MSA, UMAP)
+- ¿Qué conocimientos funcionales y evolutivos se pueden derivar del análisis de relaciones genómicas?
+    + ¿Qué funciones biológicas se asocian con los grupos de ortólogos identificados?
 
 
 ## Data Selection 
@@ -142,22 +147,5 @@ Al correr esto, tenemos las siguientes respuestas.
 
 
 El ***E-value*** es la métrica más importante para considerar un alineamiento correcto, esto indica cuántas alineamientos en promedio tendrán un score igual o mejor del observado. Otras métricas serán explicadas en la presentación.
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
