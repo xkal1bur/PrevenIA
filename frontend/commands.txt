@@ -1,0 +1,15 @@
+tsc --noEmit --watch
+
+bun create vite, typescript + SWC (Speedy Web Compiler)
+
+
+bun install tailwindcss @tailwindcss/vite
+configure in vite.config.ts
+import @tailwindcss in index.css
+
+
+bunx --bun vite -> bun run dev
+bunx --bun vite build # para production
+
+
+bun add react-router-dom
