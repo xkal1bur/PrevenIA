@@ -1,0 +1,72 @@
+src/
+├── components/           # Componentes reutilizables
+│   ├── ui/              # Componentes base (botones, inputs, etc.)
+│   │   ├── Button.tsx
+│   │   ├── Input.tsx
+│   │   ├── Card.tsx
+│   │   ├── Modal.tsx
+│   │   └── index.ts     # Barrel exports
+│   ├── layout/          # Componentes de layout
+│   │   ├── Header.tsx
+│   │   ├── Sidebar.tsx
+│   │   ├── Footer.tsx
+│   │   └── Layout.tsx
+│   └── common/          # Componentes específicos del dominio
+│       ├── PatientCard.tsx
+│       ├── LoginForm.tsx
+│       └── index.ts
+│
+├── pages/               # Páginas principales
+│   ├── auth/
+│   │   ├── Login.tsx
+│   │   └── Register.tsx
+│   ├── dashboard/
+│   │   ├── Dashboard.tsx
+│   │   └── PatientsList.tsx
+│   ├── patient/
+│   │   ├── PatientDetail.tsx
+│   │   └── PatientProfile.tsx
+│   ├── Landing.tsx
+│   └── NotFound.tsx
+│
+├── hooks/               # Custom hooks
+│   ├── useAuth.ts
+│   ├── usePatients.ts
+│   └── useApi.ts
+│
+├── services/            # Servicios y llamadas API
+│   ├── api.ts           # Configuración base de axios
+│   ├── authService.ts
+│   ├── patientService.ts
+│   └── types.ts         # Tipos de respuesta API
+│
+├── store/               # Estado global (Zustand/Context)
+│   ├── authStore.ts
+│   ├── patientStore.ts
+│   └── index.ts
+│
+├── types/               # Definiciones de tipos TypeScript
+│   ├── auth.ts
+│   ├── patient.ts
+│   └── index.ts
+│
+├── utils/               # Utilidades y helpers
+│   ├── constants.ts
+│   ├── formatters.ts
+│   ├── validators.ts
+│   └── helpers.ts
+│
+├── styles/              # Estilos globales
+│   ├── globals.css
+│   ├── variables.css
+│   └── components.css
+│
+├── assets/              # Recursos estáticos
+│   ├── images/
+│   ├── icons/
+│   └── fonts/
+│
+├── App.tsx              # Componente principal
+├── main.tsx             # Punto de entrada
+├── router.tsx           # Configuración de rutas
+└── vite-env.d.ts

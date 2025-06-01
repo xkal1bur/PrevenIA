@@ -1,3 +1,6 @@
+@import './styles/variables.css';
+@import 'tailwindcss';
+
 :root {
   font-family: system-ui, Avenir, Helvetica, Arial, sans-serif;
   line-height: 1.5;
@@ -24,6 +27,10 @@ a:hover {
 
 body {
   margin: 0;
+  padding: 0;
+  font-family: 'Segoe UI', 'Roboto', 'Arial', sans-serif;
+  background: #E8F3FF;
+  color: #1C4065;
   display: flex;
   place-items: center;
   min-width: 320px;
@@ -65,4 +72,8 @@ button:focus-visible {
   button {
     background-color: #f9f9f9;
   }
+}
+
+* {
+  box-sizing: border-box;
 }
