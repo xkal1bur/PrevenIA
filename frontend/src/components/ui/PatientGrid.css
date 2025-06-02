@@ -1,8 +1,0 @@
-.patient-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-  gap: 32px 24px;
-  justify-items: center;
-  margin: 40px 0 0 0;
-  padding: 0 32px 32px 32px;
-} 

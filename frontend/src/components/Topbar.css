@@ -1,0 +1,32 @@
+.topbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.75rem 1.5rem;
+  background-color: #bbd7ff;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  position: sticky;
+  top: 0;
+  z-index: 50;
+}
+
+.topbar-clinic {
+  margin: 0;
+  font-size: 1.5rem;
+  color: #1a237e;
+}
+
+.topbar-doctor-info {
+  display: flex;
+  align-items: center;
+}
+
+.topbar-doctor-name {
+  margin-right: 0.5rem;
+  font-size: 1rem;
+  color: #1a237e;
+}
+
+.topbar-doctor-icon {
+  color: #1a237e;
+}
