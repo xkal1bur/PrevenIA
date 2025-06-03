@@ -3,32 +3,58 @@ import * as s3 from 'aws-cdk-lib/aws-s3';
 import { Construct } from 'constructs';
 
 export interface S3ConstructProps {
-  bucketName?: string;
-  versioned?: boolean;
-  removalPolicy?: cdk.RemovalPolicy;
-  autoDeleteObjects?: boolean;
+  bucketName: string;
+  allowedOrigins?: string[]; // Add allowed origins for CORS
 }
 
 export class S3Construct extends Construct {
   public readonly bucket: s3.Bucket;
 
-  constructor(scope: Construct, id: string, props?: S3ConstructProps) {
+  constructor(scope: Construct, id: string, props: S3ConstructProps) {
     super(scope, id);
 
-    // Create an S3 bucket with configurable properties
+    // Create S3 bucket
     this.bucket = new s3.Bucket(this, 'Bucket', {
-      bucketName: props?.bucketName || `prevenia-bucket-${cdk.Stack.of(this).account}`,
-      versioned: props?.versioned ?? true,
+      bucketName: props.bucketName,
+      removalPolicy: cdk.RemovalPolicy.RETAIN,
       encryption: s3.BucketEncryption.S3_MANAGED,
       blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
-      removalPolicy: props?.removalPolicy ?? cdk.RemovalPolicy.DESTROY,
-      autoDeleteObjects: props?.autoDeleteObjects ?? true,
+      cors: [
+        {
+          allowedMethods: [
+            s3.HttpMethods.GET,
+            s3.HttpMethods.PUT,
+            s3.HttpMethods.POST,
+            s3.HttpMethods.DELETE,
+          ],
+          allowedOrigins: props.allowedOrigins || ['*'], // Allow all origins by default
+          allowedHeaders: ['*'],
+          exposedHeaders: [
+            'ETag',
+            'x-amz-server-side-encryption',
+            'x-amz-request-id',
+            'x-amz-id-2',
+          ],
+          maxAge: 3000,
+        },
+      ],
     });
 
-    // Output the bucket name
+    // Output the bucket name and ARN
     new cdk.CfnOutput(this, 'BucketName', {
       value: this.bucket.bucketName,
-      description: 'The name of the S3 bucket',
+      description: 'The S3 bucket name',
+    });
+
+    new cdk.CfnOutput(this, 'BucketArn', {
+      value: this.bucket.bucketArn,
+      description: 'The S3 bucket ARN',
+    });
+
+    // Output the bucket URL
+    new cdk.CfnOutput(this, 'BucketUrl', {
+      value: `https://${this.bucket.bucketName}.s3.${cdk.Stack.of(this).region}.amazonaws.com`,
+      description: 'The S3 bucket URL',
     });
   }
 }
