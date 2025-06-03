@@ -1,24 +1,27 @@
+/* src/components/Sidebar.css */
+
 .sidebar {
   position: fixed;
   top: 0;
   left: 0;
-  width: 220px;
-  height: 100vh;
+  width: 220px;            /* ancho fijo del sidebar */
+  height: 100vh;           /* ocupa todo el alto de la ventana */
   background-color: #e6f0ff;
   box-shadow: 2px 0 5px rgba(0, 0, 0, 0.1);
   display: flex;
   flex-direction: column;
   transition: transform 0.3s ease-in-out;
-  z-index: 100; 
+  z-index: 1000;           /* debe estar encima del Topbar (que tiene z-index: 50) */
 }
 
 .sidebar.open {
   transform: translateX(0);
 }
 
+/* En pantallas pequeñas, el sidebar se oculta por defecto */
 @media (max-width: 767px) {
   .sidebar {
-    transform: translateX(-100%); 
+    transform: translateX(-100%);
   }
 }
 
@@ -31,16 +34,9 @@
 }
 
 .sidebar-logo {
-  width: 200px;
-  height: 60px;
-  align-items: center;
-  margin-right: 0.5rem;
-}
-
-.sidebar-title {
-  font-size: 1.2rem;
-  font-weight: bold;
-  color: #ff80ab;
+  width: 180px;
+  height: auto;
+  margin: 0 auto;
 }
 
 .sidebar-nav {
@@ -108,7 +104,7 @@
   left: 0.75rem;
   background: none;
   border: none;
-  z-index: 200; 
+  z-index: 1100;            
   cursor: pointer;
 }
 

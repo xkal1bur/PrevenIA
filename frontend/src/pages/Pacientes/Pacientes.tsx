@@ -1,12 +1,14 @@
-import React, { useState, useEffect} from 'react'
+// src/pages/Pacientes/Pacientes.tsx
+
+import React, { useState, useEffect } from 'react'
 import type { ChangeEvent, FormEvent } from 'react'
+import { useNavigate } from 'react-router-dom'
+import axios from 'axios'
+import { FiPlus, FiX } from 'react-icons/fi'
 
 import Sidebar from '../../components/Sidebar'
 import Topbar from '../../components/Topbar'
 import './Pacientes.css'
-import { useNavigate } from 'react-router-dom'
-import axios from 'axios'
-import { FiPlus, FiX } from 'react-icons/fi'
 
 interface Paciente {
   id: number
@@ -53,11 +55,13 @@ const Pacientes: React.FC = () => {
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false)
   const [submitError, setSubmitError] = useState<string | null>(null)
 
-  const handleLogout = () => {
+  /* Función para cerrar sesión */
+  const handleLogout = (): void => {
     localStorage.removeItem('token')
     navigate('/')
   }
 
+  /* 1) Al montar, validar token y obtener datos del doctor */
   useEffect(() => {
     const token = localStorage.getItem('token')
     if (!token) {
@@ -81,6 +85,7 @@ const Pacientes: React.FC = () => {
       })
   }, [navigate])
 
+  /* 2) Cuando tengamos doctorId, obtener lista de pacientes de ese doctor */
   useEffect(() => {
     if (doctorId === null) return
 
@@ -100,6 +105,7 @@ const Pacientes: React.FC = () => {
       })
   }, [doctorId])
 
+  /* Manejador de cambios en el formulario de creación */
   const handleInputChange = (e: ChangeEvent<HTMLInputElement>) => {
     const { name, value, files } = e.target
     if (name === 'foto' && files) {
@@ -109,6 +115,7 @@ const Pacientes: React.FC = () => {
     }
   }
 
+  /* Enviar formulario para crear nuevo paciente */
   const handleSubmit = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault()
     setIsSubmitting(true)
@@ -119,6 +126,7 @@ const Pacientes: React.FC = () => {
         setSubmitError(
           'Aún no se ha cargado tu perfil. Recarga la página e inténtalo de nuevo.'
         )
+        setIsSubmitting(false)
         return
       }
 
@@ -169,9 +177,11 @@ const Pacientes: React.FC = () => {
 
   return (
     <div className="home-container">
+      {/* Sidebar con botón de cierre de sesión */}
       <Sidebar onLogout={handleLogout} />
 
       <div className="home-content">
+        {/* Topbar con datos de clínica y doctor */}
         <Topbar clinicName={clinicName} doctorName={doctorName} />
 
         <main className="home-main">
@@ -198,7 +208,11 @@ const Pacientes: React.FC = () => {
           ) : (
             <div className="pacientes-grid">
               {pacientes.map((p) => (
-                <div key={p.id} className="paciente-card">
+                <div
+                  key={p.id}
+                  className="paciente-card"
+                  onClick={() => navigate(`/perfil/${p.dni}`)}
+                >
                   <div className="paciente-photo">
                     {p.foto ? (
                       <img
@@ -224,6 +238,7 @@ const Pacientes: React.FC = () => {
         </main>
       </div>
 
+      {/* Modal para agregar nuevo paciente */}
       {showModal && (
         <div className="modal-overlay">
           <div className="modal-content">
