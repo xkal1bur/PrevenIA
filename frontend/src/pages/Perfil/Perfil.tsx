@@ -1,6 +1,5 @@
-// src/pages/Perfil/Perfil.tsx
-
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useState} from 'react'
+import type { ChangeEvent } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import axios from 'axios'
 import Sidebar from '../../components/Sidebar'
@@ -18,7 +17,6 @@ interface Paciente {
   correo: string
   foto?: string | null
   doctor_id: number
-
 }
 
 const Perfil: React.FC = () => {
@@ -30,8 +28,11 @@ const Perfil: React.FC = () => {
 
   const [paciente, setPaciente] = useState<Paciente | null>(null)
   const [error, setError] = useState<string>('')
-
   const [loadingPaciente, setLoadingPaciente] = useState<boolean>(true)
+
+  // --- NUEVO ESTADO para el archivo FASTA y para el feedback de carga ---
+  const [selectedFile, setSelectedFile] = useState<File | null>(null)
+  const [uploadMessage, setUploadMessage] = useState<string>('')
 
   const handleLogout = (): void => {
     localStorage.removeItem('token')
@@ -103,6 +104,60 @@ const Perfil: React.FC = () => {
     )
   }
 
+  // --- Handler para cuando el usuario seleccione un archivo ---
+  const handleFileChange = (e: ChangeEvent<HTMLInputElement>) => {
+    setUploadMessage('') // limpiar mensajes previos
+    const file = e.target.files?.[0] || null
+    if (file) {
+      // Validar extensión localmente (opcional)
+      const ext = file.name.split('.').pop()?.toLowerCase()
+      if (!['fasta', 'fa', 'fna'].includes(ext || '')) {
+        setUploadMessage('Formato inválido. Debe ser .fasta, .fa o .fna')
+        setSelectedFile(null)
+        return
+      }
+      setSelectedFile(file)
+    } else {
+      setSelectedFile(null)
+    }
+  }
+
+  // --- Handler para hacer la subida a tu backend y luego a S3 ---
+  const handleUpload = async () => {
+    setUploadMessage('')
+    if (!selectedFile) {
+      setUploadMessage('Selecciona un archivo primero')
+      return
+    }
+    try {
+      const token = localStorage.getItem('token')
+      if (!token) throw new Error('Token no encontrado')
+
+      // Preparamos FormData
+      const formData = new FormData()
+      formData.append('fasta_file', selectedFile)
+
+      // Llamamos a nuestro endpoint FastAPI
+      const resp = await axios.post(
+        `http://localhost:8000/pacientes/${dni}/upload_fasta`,
+        formData,
+        {
+          headers: {
+            'Content-Type': 'multipart/form-data',
+            Authorization: `Bearer ${token}`
+          }
+        }
+      )
+
+      setUploadMessage('Archivo subido correctamente a S3')
+    } catch (err: any) {
+      console.error(err)
+      setUploadMessage(
+        err.response?.data?.detail || 'Error al subir el archivo'
+      )
+    }
+  }
+
   return (
     <div className="perfil-container">
       <Sidebar onLogout={handleLogout} />
@@ -143,7 +198,20 @@ const Perfil: React.FC = () => {
                 <div className="upload-box">
                   <FiUploadCloud size={48} />
                 </div>
-                <button className="upload-button">Cargar Archivo</button>
+                <input
+                  type="file"
+                  accept=".fasta,.fa,.fna"
+                  onChange={handleFileChange}
+                  className="file-input"
+                />
+                <button onClick={handleUpload} className="upload-button">
+                  Cargar Archivo FASTA
+                </button>
+                {uploadMessage && (
+                  <p style={{ marginTop: '8px', color: 'green' }}>
+                    {uploadMessage}
+                  </p>
+                )}
               </div>
 
               <div className="perfil-card files-card">
