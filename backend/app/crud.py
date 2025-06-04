@@ -95,3 +95,6 @@ def get_pacientes_por_doctor(db: Session, doctor_id: int) -> list[models.Pacient
           .filter(models.Paciente.doctor_id == doctor_id)
           .all()
     )
+    
+def get_paciente_por_dni(db: Session, dni: str) -> models.Paciente | None:
+    return db.query(models.Paciente).filter(models.Paciente.dni == dni).first()
