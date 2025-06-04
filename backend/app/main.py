@@ -1,11 +1,13 @@
 import os
-from fastapi import FastAPI, Depends, HTTPException, status, UploadFile, File, Form
+from fastapi import FastAPI, Depends, HTTPException, status, UploadFile, File, Form, Path
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.orm import Session
-
+import boto3
 import models, schemas, crud, auth
 from database import SessionLocal, engine
+from fastapi.responses import JSONResponse
+from dotenv import load_dotenv
 
 models.Base.metadata.create_all(bind=engine)
 
@@ -24,6 +26,11 @@ os.makedirs("static/pacientes", exist_ok=True)
 
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
+load_dotenv()
+AWS_ACCESS_KEY_ID     = os.getenv("AWS_ACCESS_KEY_ID")
+AWS_SECRET_ACCESS_KEY = os.getenv("AWS_SECRET_ACCESS_KEY")
+AWS_SESSION_TOKEN     = os.getenv("AWS_SESSION_TOKEN")
+AWS_REGION            = os.getenv("AWS_REGION", "us-east-1")
 
 def get_db():
     db = SessionLocal()
@@ -31,6 +38,16 @@ def get_db():
         yield db
     finally:
         db.close()
+
+s3_client = boto3.client(
+    "s3",
+    aws_access_key_id=AWS_ACCESS_KEY_ID,
+    aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
+    aws_session_token=AWS_SESSION_TOKEN,     
+    region_name=AWS_REGION
+)
+
+BUCKET_NAME = "prevenia-bucket-767397661639-1748963781163"
 
 
 ### ——— RUTAS PARA DOCTORES ——— ###
@@ -154,3 +171,40 @@ def list_pacientes_por_doctor(
             detail="No tienes permiso para ver pacientes de otro doctor."
         )
     return crud.get_pacientes_por_doctor(db, doctor_id)
+
+@app.get("/pacientes/dni/{dni}",response_model=schemas.PacienteOut,tags=["Pacientes"])
+def get_paciente_por_dni(dni: str, db: Session = Depends(get_db), current_doc: models.Doctor = Depends(auth.get_current_doctor)):
+    paciente = crud.get_paciente_por_dni(db, dni)
+    if not paciente or paciente.doctor_id != current_doc.id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Paciente no encontrado o no te pertenece"
+        )
+    return paciente
+
+
+@app.post("/pacientes/{dni}/upload_fasta")
+async def upload_fasta(
+    dni: str = Path(..., description="DNI del paciente"),
+    fasta_file: UploadFile = File(...),
+    db: Session = Depends(get_db)
+):
+    
+    if not fasta_file.filename.lower().endswith((".fasta", ".fa", ".fna")):
+        raise HTTPException(status_code=400, detail="Solo se permiten archivos .fasta/.fa/.fna")
+
+    key = f"{dni}/{fasta_file.filename}"
+
+    try:
+        contents = await fasta_file.read()
+
+        s3_client.put_object(
+            Bucket=BUCKET_NAME,
+            Key=key,
+            Body=contents,
+            ContentType="application/octet-stream"
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error subiendo a S3: {e}")
+
+    return JSONResponse(status_code=200, content={"message": "Archivo subido con éxito", "s3_key": key})
