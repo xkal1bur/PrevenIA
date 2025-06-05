@@ -21,9 +21,6 @@ def create_doctor(db: Session, doc: schemas.DoctorCreate):
     db.refresh(db_doc)
     return db_doc
 
-def get_paciente_por_dni(db: Session, dni: str):
-    return db.query(models.Paciente).filter(models.Paciente.dni == dni).first()
-
 def get_paciente_por_correo(db: Session, correo: str):
     return db.query(models.Paciente).filter(models.Paciente.correo == correo).first()
 
