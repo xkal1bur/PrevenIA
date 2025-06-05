@@ -48,13 +48,13 @@ host     = _secret.get("host") or os.getenv("AURORA_HOST")
 port     = _secret.get("port") or os.getenv("AURORA_PORT", "5432")
 
 # Aquí imprimimos cada uno en consola
-print("=== Credenciales Aurora extraídas ===")
-print("username:", username)
-print("password:", password)
-print("dbname:  ", dbname)
-print("host:    ", host)
-print("port:    ", port)
-print("=====================================")
+# print("=== Credenciales Aurora extraídas ===")
+# print("username:", username)
+# print("password:", password)
+# print("dbname:  ", dbname)
+# print("host:    ", host)
+# print("port:    ", port)
+# print("=====================================")
 
 if not all([username, password, dbname, host, port]):
     raise RuntimeError("Faltan campos obligatorios en el secret de Aurora (username/password/dbname/host/port).")

@@ -8,6 +8,7 @@ import models, schemas, crud, auth
 from database import SessionLocal, engine
 from fastapi.responses import JSONResponse
 from dotenv import load_dotenv
+from ml_inference import ml_service
 
 models.Base.metadata.create_all(bind=engine)
 
@@ -208,3 +209,29 @@ async def upload_fasta(
         raise HTTPException(status_code=500, detail=f"Error subiendo a S3: {e}")
 
     return JSONResponse(status_code=200, content={"message": "Archivo subido con éxito", "s3_key": key})
+
+
+### ——— ENDPOINT PARA PREDICCIONES DE ML ——— ###
+
+@app.get("/predictions/{dni}", response_model=schemas.PredictionsResponse, tags=["ML Predictions"])
+def get_predictions_for_patient(
+    dni: str = Path(..., description="DNI del paciente"),
+    db: Session = Depends(get_db),
+    current_doc: models.Doctor = Depends(auth.get_current_doctor)
+):
+    """Obtener predicciones de ML para un paciente específico"""
+    try:
+        # Verificar que el paciente existe y pertenece al doctor
+        paciente = crud.get_paciente_por_dni(db, dni)
+        if not paciente or paciente.doctor_id != current_doc.id:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Paciente no encontrado o no te pertenece"
+            )
+        
+        # Obtener predicciones personalizadas para el paciente
+        return ml_service.get_predictions_for_patient(dni, paciente.nombres, paciente.apellidos)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error obteniendo predicciones: {str(e)}")

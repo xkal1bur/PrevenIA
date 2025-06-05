@@ -3,6 +3,7 @@ import models as models, schemas, auth as auth
 import os
 import shutil
 from fastapi import UploadFile
+from typing import Optional, List
 
 def get_doctor_by_email(db: Session, correo: str):
     return db.query(models.Doctor).filter(models.Doctor.correo == correo).first()
@@ -53,7 +54,7 @@ def create_paciente(db: Session, paciente: schemas.PacienteCreate, foto_file: Up
 def get_paciente_por_id(db: Session, paciente_id: int):
     return db.query(models.Paciente).filter(models.Paciente.id == paciente_id).first()
 
-def get_paciente_por_dni(db: Session, dni: str):
+def get_paciente_por_dni(db: Session, dni: str) -> Optional[models.Paciente]:
     return db.query(models.Paciente).filter(models.Paciente.dni == dni).first()
 
 def get_paciente_por_correo(db: Session, correo: str):
@@ -86,12 +87,9 @@ def create_paciente(db: Session, paciente: schemas.PacienteCreate, foto_file: Up
     db.refresh(db_paciente)
     return db_paciente
 
-def get_pacientes_por_doctor(db: Session, doctor_id: int) -> list[models.Paciente]:
+def get_pacientes_por_doctor(db: Session, doctor_id: int) -> List[models.Paciente]:
     return (
         db.query(models.Paciente)
           .filter(models.Paciente.doctor_id == doctor_id)
           .all()
     )
-    
-def get_paciente_por_dni(db: Session, dni: str) -> models.Paciente | None:
-    return db.query(models.Paciente).filter(models.Paciente.dni == dni).first()
