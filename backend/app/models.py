@@ -29,3 +29,4 @@ class Paciente(Base):
 
     doctor_id = Column(Integer, ForeignKey("doctor.id"), nullable=False)
     doctor = relationship("Doctor", back_populates="pacientes")
+
