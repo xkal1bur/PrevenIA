@@ -1,6 +1,6 @@
 from datetime import datetime
 from pydantic import BaseModel, EmailStr
-from typing import Optional
+from typing import Optional, Dict, Any, List
 
 class DoctorCreate(BaseModel):
     nombre: str
@@ -27,7 +27,7 @@ class Token(BaseModel):
     token_type: str
 
 class TokenData(BaseModel):
-    correo: EmailStr | None = None
+    correo: Optional[EmailStr] = None
 
 class DoctorLogin(BaseModel):
     correo: EmailStr
@@ -63,3 +63,18 @@ class PacienteOut(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+# ——— ESQUEMA PARA PREDICCIONES DE ML ——— #
+
+class PatientInfo(BaseModel):
+    dni: str
+    name: str
+
+class PredictionsResponse(BaseModel):
+    status: str
+    total_models: int
+    patient_info: PatientInfo
+    sample_used: str
+    predictions: Dict[str, Dict[str, Any]]
+    description: str

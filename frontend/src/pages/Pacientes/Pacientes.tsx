@@ -4,10 +4,11 @@ import React, { useState, useEffect } from 'react'
 import type { ChangeEvent, FormEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import axios from 'axios'
-import { FiPlus, FiX } from 'react-icons/fi'
+import { FiPlus, FiX, FiActivity } from 'react-icons/fi'
 
 import Sidebar from '../../components/Sidebar'
 import Topbar from '../../components/Topbar'
+import PredictionsPanel from '../../components/PredictionsPanel'
 import './Pacientes.css'
 
 interface Paciente {
@@ -54,6 +55,10 @@ const Pacientes: React.FC = () => {
   })
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false)
   const [submitError, setSubmitError] = useState<string | null>(null)
+  
+  // Estado para el panel de predicciones
+  const [selectedPatient, setSelectedPatient] = useState<Paciente | null>(null)
+  const [showPredictions, setShowPredictions] = useState<boolean>(false)
 
   /* Función para cerrar sesión */
   const handleLogout = (): void => {
@@ -208,28 +213,41 @@ const Pacientes: React.FC = () => {
           ) : (
             <div className="pacientes-grid">
               {pacientes.map((p) => (
-                <div
-                  key={p.id}
-                  className="paciente-card"
-                  onClick={() => navigate(`/perfil/${p.dni}`)}
-                >
-                  <div className="paciente-photo">
-                    {p.foto ? (
-                      <img
-                        src={`http://localhost:8000/static/pacientes/${p.foto}`}
-                        alt={`${p.nombres} ${p.apellidos}`}
-                      />
-                    ) : (
-                      <div className="no-photo-placeholder" />
-                    )}
+                <div key={p.id} className="paciente-card">
+                  <div 
+                    className="paciente-content"
+                    onClick={() => navigate(`/perfil/${p.dni}`)}
+                  >
+                    <div className="paciente-photo">
+                      {p.foto ? (
+                        <img
+                          src={`http://localhost:8000/static/pacientes/${p.foto}`}
+                          alt={`${p.nombres} ${p.apellidos}`}
+                        />
+                      ) : (
+                        <div className="no-photo-placeholder" />
+                      )}
+                    </div>
+                    <div className="paciente-info">
+                      <h3 className="paciente-nombre">
+                        {p.nombres} {p.apellidos}
+                      </h3>
+                      <p className="paciente-codigo">DNI: {p.dni}</p>
+                      <p className="paciente-edad">Edad: {p.edad} años</p>
+                      <p className="paciente-celular">Celular: {p.celular}</p>
+                    </div>
                   </div>
-                  <div className="paciente-info">
-                    <h3 className="paciente-nombre">
-                      {p.nombres} {p.apellidos}
-                    </h3>
-                    <p className="paciente-codigo">DNI: {p.dni}</p>
-                    <p className="paciente-edad">Edad: {p.edad} años</p>
-                    <p className="paciente-celular">Celular: {p.celular}</p>
+                  <div className="paciente-actions">
+                    <button
+                      className="btn-predictions"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        setSelectedPatient(p)
+                        setShowPredictions(true)
+                      }}
+                    >
+                      <FiActivity size={16} /> Predicciones ML
+                    </button>
                   </div>
                 </div>
               ))}
@@ -336,6 +354,27 @@ const Pacientes: React.FC = () => {
                 {isSubmitting ? 'Guardando...' : 'Guardar'}
               </button>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal para mostrar predicciones */}
+      {showPredictions && selectedPatient && (
+        <div className="modal-overlay">
+          <div className="modal-content predictions-modal">
+            <button
+              className="modal-close-btn"
+              onClick={() => {
+                setShowPredictions(false)
+                setSelectedPatient(null)
+              }}
+            >
+              <FiX size={24} />
+            </button>
+            <PredictionsPanel
+              patientDni={selectedPatient.dni}
+              patientName={`${selectedPatient.nombres} ${selectedPatient.apellidos}`}
+            />
           </div>
         </div>
       )}
