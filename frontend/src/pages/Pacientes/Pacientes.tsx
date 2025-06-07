@@ -4,11 +4,10 @@ import React, { useState, useEffect } from 'react'
 import type { ChangeEvent, FormEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import axios from 'axios'
-import { FiPlus, FiX, FiActivity } from 'react-icons/fi'
+import { FiPlus, FiX } from 'react-icons/fi'
 
 import Sidebar from '../../components/Sidebar'
 import Topbar from '../../components/Topbar'
-import PredictionsPanel from '../../components/PredictionsPanel'
 import './Pacientes.css'
 
 interface Paciente {
@@ -55,10 +54,6 @@ const Pacientes: React.FC = () => {
   })
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false)
   const [submitError, setSubmitError] = useState<string | null>(null)
-  
-  // Estado para el panel de predicciones
-  const [selectedPatient, setSelectedPatient] = useState<Paciente | null>(null)
-  const [showPredictions, setShowPredictions] = useState<boolean>(false)
 
   /* Función para cerrar sesión */
   const handleLogout = (): void => {
@@ -237,18 +232,6 @@ const Pacientes: React.FC = () => {
                       <p className="paciente-celular">Celular: {p.celular}</p>
                     </div>
                   </div>
-                  <div className="paciente-actions">
-                    <button
-                      className="btn-predictions"
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        setSelectedPatient(p)
-                        setShowPredictions(true)
-                      }}
-                    >
-                      <FiActivity size={16} /> Predicciones ML
-                    </button>
-                  </div>
                 </div>
               ))}
             </div>
@@ -358,26 +341,6 @@ const Pacientes: React.FC = () => {
         </div>
       )}
 
-      {/* Modal para mostrar predicciones */}
-      {showPredictions && selectedPatient && (
-        <div className="modal-overlay">
-          <div className="modal-content predictions-modal">
-            <button
-              className="modal-close-btn"
-              onClick={() => {
-                setShowPredictions(false)
-                setSelectedPatient(null)
-              }}
-            >
-              <FiX size={24} />
-            </button>
-            <PredictionsPanel
-              patientDni={selectedPatient.dni}
-              patientName={`${selectedPatient.nombres} ${selectedPatient.apellidos}`}
-            />
-          </div>
-        </div>
-      )}
     </div>
   )
 }

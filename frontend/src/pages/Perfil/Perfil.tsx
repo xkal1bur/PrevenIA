@@ -4,7 +4,8 @@ import { useParams, useNavigate } from 'react-router-dom'
 import axios from 'axios'
 import Sidebar from '../../components/Sidebar'
 import Topbar from '../../components/Topbar'
-import { FiUploadCloud } from 'react-icons/fi'
+import PredictionsPanel from '../../components/PredictionsPanel'
+import { FiUploadCloud, FiActivity } from 'react-icons/fi'
 import './Perfil.css'
 
 interface Paciente {
@@ -33,6 +34,9 @@ const Perfil: React.FC = () => {
   // --- NUEVO ESTADO para el archivo FASTA y para el feedback de carga ---
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
   const [uploadMessage, setUploadMessage] = useState<string>('')
+
+  // Estado para el panel de predicciones
+  const [showPredictions, setShowPredictions] = useState<boolean>(false)
 
   const handleLogout = (): void => {
     localStorage.removeItem('token')
@@ -138,7 +142,7 @@ const Perfil: React.FC = () => {
       formData.append('fasta_file', selectedFile)
 
       // Llamamos a nuestro endpoint FastAPI
-      const resp = await axios.post(
+      await axios.post(
         `http://localhost:8000/pacientes/${dni}/upload_fasta`,
         formData,
         {
@@ -150,11 +154,12 @@ const Perfil: React.FC = () => {
       )
 
       setUploadMessage('Archivo subido correctamente a S3')
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error(err)
-      setUploadMessage(
-        err.response?.data?.detail || 'Error al subir el archivo'
-      )
+      const errorMessage = axios.isAxiosError(err) && err.response?.data?.detail 
+        ? err.response.data.detail 
+        : 'Error al subir el archivo'
+      setUploadMessage(errorMessage)
     }
   }
 
@@ -190,6 +195,14 @@ const Perfil: React.FC = () => {
                 <p>Edad: {paciente.edad} años</p>
                 <p>Celular: {paciente.celular}</p>
                 <p>Correo: {paciente.correo}</p>
+                
+                <button
+                  className="btn-predictions"
+                  onClick={() => setShowPredictions(true)}
+                  style={{ marginTop: '1rem', padding: '0.5rem 1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}
+                >
+                  <FiActivity size={16} /> Predicciones ML
+                </button>
               </div>
             </div>
 
@@ -223,6 +236,25 @@ const Perfil: React.FC = () => {
           </div>
         </main>
       </div>
+
+      {/* Modal para mostrar predicciones */}
+      {showPredictions && (
+        <div className="modal-overlay">
+          <div className="modal-content predictions-modal">
+            <button
+              className="modal-close-btn"
+              onClick={() => setShowPredictions(false)}
+              style={{ position: 'absolute', top: '1rem', right: '1rem', background: 'none', border: 'none', cursor: 'pointer' }}
+            >
+              ✕
+            </button>
+            <PredictionsPanel
+              patientDni={paciente.dni}
+              patientName={`${paciente.nombres} ${paciente.apellidos}`}
+            />
+          </div>
+        </div>
+      )}
     </div>
   )
 }
