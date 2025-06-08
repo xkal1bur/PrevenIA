@@ -1,0 +1,598 @@
+Resources:
+  PreveniaVPCA733668F:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+      InstanceTenancy: default
+      Tags:
+        - Key: Name
+          Value: PrevenIAStack/PreveniaVPC
+    Metadata:
+      aws:cdk:path: PrevenIAStack/PreveniaVPC/Resource
+  PreveniaVPCPublicSubnet1Subnet9749DFE1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: us-east-1a
+      CidrBlock: 10.0.0.0/24
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: aws-cdk:subnet-name
+          Value: Public
+        - Key: aws-cdk:subnet-type
+          Value: Public
+        - Key: Name
+          Value: PrevenIAStack/PreveniaVPC/PublicSubnet1
+      VpcId:
+        Ref: PreveniaVPCA733668F
+    Metadata:
+      aws:cdk:path: PrevenIAStack/PreveniaVPC/PublicSubnet1/Subnet
+  PreveniaVPCPublicSubnet1RouteTableBE91388D:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      Tags:
+        - Key: Name
+          Value: PrevenIAStack/PreveniaVPC/PublicSubnet1
+      VpcId:
+        Ref: PreveniaVPCA733668F
+    Metadata:
+      aws:cdk:path: PrevenIAStack/PreveniaVPC/PublicSubnet1/RouteTable
+  PreveniaVPCPublicSubnet1RouteTableAssociation0D093267:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId:
+        Ref: PreveniaVPCPublicSubnet1RouteTableBE91388D
+      SubnetId:
+        Ref: PreveniaVPCPublicSubnet1Subnet9749DFE1
+    Metadata:
+      aws:cdk:path: PrevenIAStack/PreveniaVPC/PublicSubnet1/RouteTableAssociation
+  PreveniaVPCPublicSubnet1DefaultRouteF5EBE9D6:
+    Type: AWS::EC2::Route
+    Properties:
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId:
+        Ref: PreveniaVPCIGW160EFE90
+      RouteTableId:
+        Ref: PreveniaVPCPublicSubnet1RouteTableBE91388D
+    DependsOn:
+      - PreveniaVPCVPCGWA5474660
+    Metadata:
+      aws:cdk:path: PrevenIAStack/PreveniaVPC/PublicSubnet1/DefaultRoute
+  PreveniaVPCPublicSubnet1EIPBA982CB5:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+      Tags:
+        - Key: Name
+          Value: PrevenIAStack/PreveniaVPC/PublicSubnet1
+    Metadata:
+      aws:cdk:path: PrevenIAStack/PreveniaVPC/PublicSubnet1/EIP
+  PreveniaVPCPublicSubnet1NATGateway74DD5948:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId:
+        Fn::GetAtt:
+          - PreveniaVPCPublicSubnet1EIPBA982CB5
+          - AllocationId
+      SubnetId:
+        Ref: PreveniaVPCPublicSubnet1Subnet9749DFE1
+      Tags:
+        - Key: Name
+          Value: PrevenIAStack/PreveniaVPC/PublicSubnet1
+    DependsOn:
+      - PreveniaVPCPublicSubnet1DefaultRouteF5EBE9D6
+      - PreveniaVPCPublicSubnet1RouteTableAssociation0D093267
+    Metadata:
+      aws:cdk:path: PrevenIAStack/PreveniaVPC/PublicSubnet1/NATGateway
+  PreveniaVPCPublicSubnet2Subnet51803F68:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: us-east-1b
+      CidrBlock: 10.0.1.0/24
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: aws-cdk:subnet-name
+          Value: Public
+        - Key: aws-cdk:subnet-type
+          Value: Public
+        - Key: Name
+          Value: PrevenIAStack/PreveniaVPC/PublicSubnet2
+      VpcId:
+        Ref: PreveniaVPCA733668F
+    Metadata:
+      aws:cdk:path: PrevenIAStack/PreveniaVPC/PublicSubnet2/Subnet
+  PreveniaVPCPublicSubnet2RouteTable77CE51C5:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      Tags:
+        - Key: Name
+          Value: PrevenIAStack/PreveniaVPC/PublicSubnet2
+      VpcId:
+        Ref: PreveniaVPCA733668F
+    Metadata:
+      aws:cdk:path: PrevenIAStack/PreveniaVPC/PublicSubnet2/RouteTable
+  PreveniaVPCPublicSubnet2RouteTableAssociation712CFA0C:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId:
+        Ref: PreveniaVPCPublicSubnet2RouteTable77CE51C5
+      SubnetId:
+        Ref: PreveniaVPCPublicSubnet2Subnet51803F68
+    Metadata:
+      aws:cdk:path: PrevenIAStack/PreveniaVPC/PublicSubnet2/RouteTableAssociation
+  PreveniaVPCPublicSubnet2DefaultRoute334D1666:
+    Type: AWS::EC2::Route
+    Properties:
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId:
+        Ref: PreveniaVPCIGW160EFE90
+      RouteTableId:
+        Ref: PreveniaVPCPublicSubnet2RouteTable77CE51C5
+    DependsOn:
+      - PreveniaVPCVPCGWA5474660
+    Metadata:
+      aws:cdk:path: PrevenIAStack/PreveniaVPC/PublicSubnet2/DefaultRoute
+  PreveniaVPCPrivateSubnet1Subnet44EEA9A6:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: us-east-1a
+      CidrBlock: 10.0.2.0/24
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: aws-cdk:subnet-name
+          Value: Private
+        - Key: aws-cdk:subnet-type
+          Value: Private
+        - Key: Name
+          Value: PrevenIAStack/PreveniaVPC/PrivateSubnet1
+      VpcId:
+        Ref: PreveniaVPCA733668F
+    Metadata:
+      aws:cdk:path: PrevenIAStack/PreveniaVPC/PrivateSubnet1/Subnet
+  PreveniaVPCPrivateSubnet1RouteTableA3DB57F5:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      Tags:
+        - Key: Name
+          Value: PrevenIAStack/PreveniaVPC/PrivateSubnet1
+      VpcId:
+        Ref: PreveniaVPCA733668F
+    Metadata:
+      aws:cdk:path: PrevenIAStack/PreveniaVPC/PrivateSubnet1/RouteTable
+  PreveniaVPCPrivateSubnet1RouteTableAssociation359FC310:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId:
+        Ref: PreveniaVPCPrivateSubnet1RouteTableA3DB57F5
+      SubnetId:
+        Ref: PreveniaVPCPrivateSubnet1Subnet44EEA9A6
+    Metadata:
+      aws:cdk:path: PrevenIAStack/PreveniaVPC/PrivateSubnet1/RouteTableAssociation
+  PreveniaVPCPrivateSubnet1DefaultRouteB03C9CB3:
+    Type: AWS::EC2::Route
+    Properties:
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId:
+        Ref: PreveniaVPCPublicSubnet1NATGateway74DD5948
+      RouteTableId:
+        Ref: PreveniaVPCPrivateSubnet1RouteTableA3DB57F5
+    Metadata:
+      aws:cdk:path: PrevenIAStack/PreveniaVPC/PrivateSubnet1/DefaultRoute
+  PreveniaVPCPrivateSubnet2SubnetD38AA677:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: us-east-1b
+      CidrBlock: 10.0.3.0/24
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: aws-cdk:subnet-name
+          Value: Private
+        - Key: aws-cdk:subnet-type
+          Value: Private
+        - Key: Name
+          Value: PrevenIAStack/PreveniaVPC/PrivateSubnet2
+      VpcId:
+        Ref: PreveniaVPCA733668F
+    Metadata:
+      aws:cdk:path: PrevenIAStack/PreveniaVPC/PrivateSubnet2/Subnet
+  PreveniaVPCPrivateSubnet2RouteTable1DBD99A1:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      Tags:
+        - Key: Name
+          Value: PrevenIAStack/PreveniaVPC/PrivateSubnet2
+      VpcId:
+        Ref: PreveniaVPCA733668F
+    Metadata:
+      aws:cdk:path: PrevenIAStack/PreveniaVPC/PrivateSubnet2/RouteTable
+  PreveniaVPCPrivateSubnet2RouteTableAssociationEA5D44D9:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId:
+        Ref: PreveniaVPCPrivateSubnet2RouteTable1DBD99A1
+      SubnetId:
+        Ref: PreveniaVPCPrivateSubnet2SubnetD38AA677
+    Metadata:
+      aws:cdk:path: PrevenIAStack/PreveniaVPC/PrivateSubnet2/RouteTableAssociation
+  PreveniaVPCPrivateSubnet2DefaultRouteC7865729:
+    Type: AWS::EC2::Route
+    Properties:
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId:
+        Ref: PreveniaVPCPublicSubnet1NATGateway74DD5948
+      RouteTableId:
+        Ref: PreveniaVPCPrivateSubnet2RouteTable1DBD99A1
+    Metadata:
+      aws:cdk:path: PrevenIAStack/PreveniaVPC/PrivateSubnet2/DefaultRoute
+  PreveniaVPCIsolatedSubnet1Subnet8ED61B8F:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: us-east-1a
+      CidrBlock: 10.0.4.0/24
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: aws-cdk:subnet-name
+          Value: Isolated
+        - Key: aws-cdk:subnet-type
+          Value: Isolated
+        - Key: Name
+          Value: PrevenIAStack/PreveniaVPC/IsolatedSubnet1
+      VpcId:
+        Ref: PreveniaVPCA733668F
+    Metadata:
+      aws:cdk:path: PrevenIAStack/PreveniaVPC/IsolatedSubnet1/Subnet
+  PreveniaVPCIsolatedSubnet1RouteTable80FF5FA6:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      Tags:
+        - Key: Name
+          Value: PrevenIAStack/PreveniaVPC/IsolatedSubnet1
+      VpcId:
+        Ref: PreveniaVPCA733668F
+    Metadata:
+      aws:cdk:path: PrevenIAStack/PreveniaVPC/IsolatedSubnet1/RouteTable
+  PreveniaVPCIsolatedSubnet1RouteTableAssociationB6350A57:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId:
+        Ref: PreveniaVPCIsolatedSubnet1RouteTable80FF5FA6
+      SubnetId:
+        Ref: PreveniaVPCIsolatedSubnet1Subnet8ED61B8F
+    Metadata:
+      aws:cdk:path: PrevenIAStack/PreveniaVPC/IsolatedSubnet1/RouteTableAssociation
+  PreveniaVPCIsolatedSubnet2Subnet3CC8A76E:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: us-east-1b
+      CidrBlock: 10.0.5.0/24
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: aws-cdk:subnet-name
+          Value: Isolated
+        - Key: aws-cdk:subnet-type
+          Value: Isolated
+        - Key: Name
+          Value: PrevenIAStack/PreveniaVPC/IsolatedSubnet2
+      VpcId:
+        Ref: PreveniaVPCA733668F
+    Metadata:
+      aws:cdk:path: PrevenIAStack/PreveniaVPC/IsolatedSubnet2/Subnet
+  PreveniaVPCIsolatedSubnet2RouteTableAFA141CB:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      Tags:
+        - Key: Name
+          Value: PrevenIAStack/PreveniaVPC/IsolatedSubnet2
+      VpcId:
+        Ref: PreveniaVPCA733668F
+    Metadata:
+      aws:cdk:path: PrevenIAStack/PreveniaVPC/IsolatedSubnet2/RouteTable
+  PreveniaVPCIsolatedSubnet2RouteTableAssociationB1CA3A4A:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId:
+        Ref: PreveniaVPCIsolatedSubnet2RouteTableAFA141CB
+      SubnetId:
+        Ref: PreveniaVPCIsolatedSubnet2Subnet3CC8A76E
+    Metadata:
+      aws:cdk:path: PrevenIAStack/PreveniaVPC/IsolatedSubnet2/RouteTableAssociation
+  PreveniaVPCIGW160EFE90:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: PrevenIAStack/PreveniaVPC
+    Metadata:
+      aws:cdk:path: PrevenIAStack/PreveniaVPC/IGW
+  PreveniaVPCVPCGWA5474660:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      InternetGatewayId:
+        Ref: PreveniaVPCIGW160EFE90
+      VpcId:
+        Ref: PreveniaVPCA733668F
+    Metadata:
+      aws:cdk:path: PrevenIAStack/PreveniaVPC/VPCGW
+  PreveniaVPCRestrictDefaultSecurityGroupCustomResourceECBEEA80:
+    Type: Custom::VpcRestrictDefaultSG
+    Properties:
+      ServiceToken:
+        Fn::GetAtt:
+          - CustomVpcRestrictDefaultSGCustomResourceProviderHandlerDC833E5E
+          - Arn
+      DefaultSecurityGroupId:
+        Fn::GetAtt:
+          - PreveniaVPCA733668F
+          - DefaultSecurityGroup
+      Account: "767397661639"
+    UpdateReplacePolicy: Delete
+    DeletionPolicy: Delete
+    Metadata:
+      aws:cdk:path: PrevenIAStack/PreveniaVPC/RestrictDefaultSecurityGroupCustomResource/Default
+  CustomVpcRestrictDefaultSGCustomResourceProviderRole26592FE0:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Action: sts:AssumeRole
+            Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+      ManagedPolicyArns:
+        - Fn::Sub: arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: Inline
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ec2:AuthorizeSecurityGroupIngress
+                  - ec2:AuthorizeSecurityGroupEgress
+                  - ec2:RevokeSecurityGroupIngress
+                  - ec2:RevokeSecurityGroupEgress
+                Resource:
+                  - Fn::Join:
+                      - ""
+                      - - arn:aws:ec2:us-east-1:767397661639:security-group/
+                        - Fn::GetAtt:
+                            - PreveniaVPCA733668F
+                            - DefaultSecurityGroup
+    Metadata:
+      aws:cdk:path: PrevenIAStack/Custom::VpcRestrictDefaultSGCustomResourceProvider/Role
+  CustomVpcRestrictDefaultSGCustomResourceProviderHandlerDC833E5E:
+    Type: AWS::Lambda::Function
+    Properties:
+      Code:
+        S3Bucket: cdk-hnb659fds-assets-767397661639-us-east-1
+        S3Key: 7fa1e366ee8a9ded01fc355f704cff92bfd179574e6f9cfee800a3541df1b200.zip
+      Timeout: 900
+      MemorySize: 128
+      Handler: __entrypoint__.handler
+      Role:
+        Fn::GetAtt:
+          - CustomVpcRestrictDefaultSGCustomResourceProviderRole26592FE0
+          - Arn
+      Runtime: nodejs22.x
+      Description: Lambda function for removing all inbound/outbound rules from the VPC default security group
+    DependsOn:
+      - CustomVpcRestrictDefaultSGCustomResourceProviderRole26592FE0
+    Metadata:
+      aws:cdk:path: PrevenIAStack/Custom::VpcRestrictDefaultSGCustomResourceProvider/Handler
+      aws:asset:path: /tmp/cdk-custom-resourceDOA4pN
+      aws:asset:property: Code
+  DatabaseSecurityGroup7319C0F6:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for Aurora DB
+      SecurityGroupEgress:
+        - CidrIp: 0.0.0.0/0
+          Description: Allow all outbound traffic by default
+          IpProtocol: "-1"
+      SecurityGroupIngress:
+        - CidrIp: 0.0.0.0/0
+          Description: Allow PostgreSQL access
+          FromPort: 5432
+          IpProtocol: tcp
+          ToPort: 5432
+      VpcId:
+        Ref: PreveniaVPCA733668F
+    Metadata:
+      aws:cdk:path: PrevenIAStack/DatabaseSecurityGroup/Resource
+  S3ServiceBucket8A635405:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      BucketName: prevenia-bucket-767397661639
+      CorsConfiguration:
+        CorsRules:
+          - AllowedHeaders:
+              - "*"
+            AllowedMethods:
+              - GET
+              - PUT
+              - POST
+              - DELETE
+            AllowedOrigins:
+              - "*"
+            ExposedHeaders:
+              - ETag
+              - x-amz-server-side-encryption
+              - x-amz-request-id
+              - x-amz-id-2
+            MaxAge: 3000
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+    UpdateReplacePolicy: Retain
+    DeletionPolicy: Retain
+    Metadata:
+      aws:cdk:path: PrevenIAStack/S3Service/Bucket/Resource
+  AuroraServiceDatabaseSubnetsFFCF7D34:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: Subnets for Database database
+      SubnetIds:
+        - Ref: PreveniaVPCPublicSubnet1Subnet9749DFE1
+        - Ref: PreveniaVPCPublicSubnet2Subnet51803F68
+    Metadata:
+      aws:cdk:path: PrevenIAStack/AuroraService/Database/Subnets/Default
+  PrevenIAStackAuroraServiceDatabaseSecret1A7955793fdaad7efa858a3daf9490cf0a702aeb:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Description:
+        Fn::Join:
+          - ""
+          - - "Generated by the CDK for stack: "
+            - Ref: AWS::StackName
+      GenerateSecretString:
+        ExcludeCharacters: " %+~`#$&*()|[]{}:;<>?!'/@\"\\"
+        GenerateStringKey: password
+        PasswordLength: 30
+        SecretStringTemplate: '{"username":"postgres"}'
+    UpdateReplacePolicy: Delete
+    DeletionPolicy: Delete
+    Metadata:
+      aws:cdk:path: PrevenIAStack/AuroraService/Database/Secret/Resource
+  AuroraServiceDatabaseSecretAttachmentF6D8D8E7:
+    Type: AWS::SecretsManager::SecretTargetAttachment
+    Properties:
+      SecretId:
+        Ref: PrevenIAStackAuroraServiceDatabaseSecret1A7955793fdaad7efa858a3daf9490cf0a702aeb
+      TargetId:
+        Ref: AuroraServiceDatabase6001E67B
+      TargetType: AWS::RDS::DBCluster
+    Metadata:
+      aws:cdk:path: PrevenIAStack/AuroraService/Database/Secret/Attachment/Resource
+  AuroraServiceDatabase6001E67B:
+    Type: AWS::RDS::DBCluster
+    Properties:
+      CopyTagsToSnapshot: true
+      DBClusterParameterGroupName: default.aurora-postgresql15
+      DBSubnetGroupName:
+        Ref: AuroraServiceDatabaseSubnetsFFCF7D34
+      DatabaseName: prevenia
+      Engine: aurora-postgresql
+      EngineVersion: "15.3"
+      MasterUserPassword:
+        Fn::Join:
+          - ""
+          - - "{{resolve:secretsmanager:"
+            - Ref: PrevenIAStackAuroraServiceDatabaseSecret1A7955793fdaad7efa858a3daf9490cf0a702aeb
+            - :SecretString:password::}}
+      MasterUsername: postgres
+      Port: 5432
+      VpcSecurityGroupIds:
+        - Fn::GetAtt:
+            - DatabaseSecurityGroup7319C0F6
+            - GroupId
+    UpdateReplacePolicy: Snapshot
+    DeletionPolicy: Snapshot
+    Metadata:
+      aws:cdk:path: PrevenIAStack/AuroraService/Database/Resource
+  AuroraServiceDatabaseInstance1FFD443EE:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      DBClusterIdentifier:
+        Ref: AuroraServiceDatabase6001E67B
+      DBInstanceClass: db.t3.medium
+      DBSubnetGroupName:
+        Ref: AuroraServiceDatabaseSubnetsFFCF7D34
+      Engine: aurora-postgresql
+      PubliclyAccessible: true
+    DependsOn:
+      - PreveniaVPCPublicSubnet1DefaultRouteF5EBE9D6
+      - PreveniaVPCPublicSubnet1RouteTableAssociation0D093267
+      - PreveniaVPCPublicSubnet2DefaultRoute334D1666
+      - PreveniaVPCPublicSubnet2RouteTableAssociation712CFA0C
+    UpdateReplacePolicy: Delete
+    DeletionPolicy: Delete
+    Metadata:
+      aws:cdk:path: PrevenIAStack/AuroraService/Database/Instance1
+  AuroraServiceDatabaseInstance2BAE48362:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      DBClusterIdentifier:
+        Ref: AuroraServiceDatabase6001E67B
+      DBInstanceClass: db.t3.medium
+      DBSubnetGroupName:
+        Ref: AuroraServiceDatabaseSubnetsFFCF7D34
+      Engine: aurora-postgresql
+      PubliclyAccessible: true
+    DependsOn:
+      - PreveniaVPCPublicSubnet1DefaultRouteF5EBE9D6
+      - PreveniaVPCPublicSubnet1RouteTableAssociation0D093267
+      - PreveniaVPCPublicSubnet2DefaultRoute334D1666
+      - PreveniaVPCPublicSubnet2RouteTableAssociation712CFA0C
+    UpdateReplacePolicy: Delete
+    DeletionPolicy: Delete
+    Metadata:
+      aws:cdk:path: PrevenIAStack/AuroraService/Database/Instance2
+  CDKMetadata:
+    Type: AWS::CDK::Metadata
+    Properties:
+      Analytics: v2:deflate64:H4sIAAAAAAAA/+1XS2/jNhD+LatjoahNAhRtbo7jpkaT2LC9OXQRLChyrDCmSJUPJ67h/97hQ5LtDRZYbIH60ItFDjnDjzPfDMcXxfmvvxQ/fSCv5oyy1ZngZbGdW0JXOYo+b4FeFNvHhn7aZjV5G/xtsqvshyzPJLG3xMIr2bQS40oJdqjkkldOE8uVzK5QTZIaDrYsNo0XTF0pOEUp5UzfE7MKm3b5VzQ0X+OZ36IyNkqgCvtC52n3lA+X8nE6zCOQeVBDvGRNuCAlF9xu/lSyNbtu6JilsTd1LRRdpXlNmmhk3EzkHXGSPmdXVjvIM96sfx4ebSfG8EqOcWXAmAZjJnKoIXksXegkUAQgjD10scaA4srTyQA8DRSRSpFAfjRTzsKClAJ6eS8bGKMoDwa6zX4wGk/9p3d2nvj+rzNzSYQ5AZ9/H4zTQXIiME4Hyf8wTg5GqFBjaUFjKWnrS3z/0mxg8dF/rkHafA7UaQR7q5VrsO4g0nQOA0M1bzq7eLIQ6nUgxMTZUjnJYilND8dYVh7MzAkIrQAliEFwCVESiy5VUgL1JttOwkn+l4PknMDs8OjEKruPbZeby2J77egq1McyDB76VkBDrdZETBV6Et8unFvCJS6ApHrTXmN++fl+8DC4Hd3gSum9Gn0/oBTBtxFS2oQ7hAsDuwf7rJgXZbejBW6Yfgy/k7n/3IzuRotR9pS32yeaV7y7YBL+DoSBboXw1ihzLPQ9VwVtyxK9OkQonUv/Ozh5kHSBiVHY5ZqZYntDLCmJgaFwBjmHOEHigajZjlJ/Fho2LisBHw3ombKBs4OmQf+TPZpFpUdEEmTbbOmE6KYJ24vS+yJE2BCNbEAEgS6/kZqLzYHFAxGDJXHCeiQH/WTTKI095J2qPGrTGqcaGKYLx7RMW9GllkgKU60a41H2mYOj+I4H+XuNMFo0++Q2qdnqze75rAk6YhM5yss2nXbdLdoQdOmAYYoI2rT+Mpm/Ee5xerV15uZ676C8BYKZq0Oa9sn3B7SuN2HxIHUDBWZQdYXB098dxeZY7T3b8EaFYzB8RjJQ25PZH0EoTOQUy+er0myIvgfNCe6UlY9zLFDvQUn3TPyOk3EKE1alAMvURJIKdLGNdQtFefwsiK7A9hUXnRJVEjIb1vdOel9tt8tnYJTTFD7hNoSi6k4QqOP7yyQ4WkeKrjlm9jVGJseWFCz+6cOMqLwOFvPGYS5LxaB4MT+uLy6L8/Pi/MOL4fxMOyR9DcUsfv8BkCLHXEIOAAA=
+    Metadata:
+      aws:cdk:path: PrevenIAStack/CDKMetadata/Default
+Outputs:
+  S3ServiceBucketName8CCF8B31:
+    Description: The S3 bucket name
+    Value:
+      Ref: S3ServiceBucket8A635405
+  S3ServiceBucketArn3354C49C:
+    Description: The S3 bucket ARN
+    Value:
+      Fn::GetAtt:
+        - S3ServiceBucket8A635405
+        - Arn
+  S3ServiceBucketUrl0CA99E88:
+    Description: The S3 bucket URL
+    Value:
+      Fn::Join:
+        - ""
+        - - https://
+          - Ref: S3ServiceBucket8A635405
+          - .s3.us-east-1.amazonaws.com
+  AuroraServiceClusterEndpoint9246E44B:
+    Description: The cluster endpoint
+    Value:
+      Fn::GetAtt:
+        - AuroraServiceDatabase6001E67B
+        - Endpoint.Address
+  AuroraServiceClusterPort1F08AE41:
+    Description: The cluster port
+    Value: "5432"
+  AuroraServiceSecretArn5BE480CA:
+    Description: The ARN of the secret containing the database password
+    Value:
+      Ref: AuroraServiceDatabaseSecretAttachmentF6D8D8E7
+  VpcId:
+    Description: The VPC ID
+    Value:
+      Ref: PreveniaVPCA733668F
+  DatabaseEndpoint:
+    Description: The database endpoint
+    Value:
+      Fn::GetAtt:
+        - AuroraServiceDatabase6001E67B
+        - Endpoint.Address
+  DatabasePort:
+    Description: The database port
+    Value: "5432"
+  BucketName:
+    Description: The S3 bucket name
+    Value:
+      Ref: S3ServiceBucket8A635405
+Parameters:
+  BootstrapVersion:
+    Type: AWS::SSM::Parameter::Value<String>
+    Default: /cdk-bootstrap/hnb659fds/version
+    Description: Version of the CDK Bootstrap resources in this environment, automatically retrieved from SSM Parameter Store. [cdk:skip]
+
