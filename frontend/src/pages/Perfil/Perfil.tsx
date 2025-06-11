@@ -5,6 +5,7 @@ import axios from 'axios'
 import Sidebar from '../../components/Sidebar'
 import Topbar from '../../components/Topbar'
 import PredictionsPanel from '../../components/PredictionsPanel'
+import DNAViewer from '../../components/DNAViewer'
 import { FiUploadCloud, FiActivity } from 'react-icons/fi'
 import './Perfil.css'
 
@@ -34,6 +35,11 @@ const Perfil: React.FC = () => {
   // --- NUEVO ESTADO para el archivo FASTA y para el feedback de carga ---
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
   const [uploadMessage, setUploadMessage] = useState<string>('')
+
+  // Estado para las secuencias de ADN
+  const [referenceSequence, setReferenceSequence] = useState<string>('')
+  const [patientSequence, setPatientSequence] = useState<string>('')
+  const [sequenceLoaded, setSequenceLoaded] = useState<boolean>(false)
 
   // Estado para el panel de predicciones
   const [showPredictions, setShowPredictions] = useState<boolean>(false)
@@ -108,9 +114,74 @@ const Perfil: React.FC = () => {
     )
   }
 
+  // Función para extraer secuencia de un archivo FASTA
+  const extractSequenceFromFasta = (fileContent: string): string => {
+    const lines = fileContent.split('\n')
+    let sequence = ''
+    
+    for (const line of lines) {
+      const trimmedLine = line.trim()
+      // Ignorar líneas de encabezado (que empiezan con >)
+      if (!trimmedLine.startsWith('>') && trimmedLine.length > 0) {
+        sequence += trimmedLine.toUpperCase().replace(/[^ATCG]/g, '') // Solo bases válidas
+      }
+    }
+    
+    return sequence
+  }
+
+  // Función optimizada para generar mutaciones y deleciones simuladas en secuencias largas
+  const generatePatientSequence = (referenceSeq: string): string => {
+    if (referenceSeq.length === 0) return ''
+    
+    const bases = ['A', 'T', 'C', 'G']
+    const mutationRate = 0.02 // 2% de mutaciones
+    const deletionRate = 0.005 // 0.5% de deleciones
+    const sequenceArray = referenceSeq.split('')
+    
+    // Optimización: pre-calcular posiciones de mutación y deleción para secuencias largas
+    const totalMutations = Math.floor(referenceSeq.length * mutationRate)
+    const totalDeletions = Math.floor(referenceSeq.length * deletionRate)
+    
+    // Generar posiciones aleatorias únicas para mutaciones
+    const mutationPositions = new Set<number>()
+    while (mutationPositions.size < totalMutations) {
+      mutationPositions.add(Math.floor(Math.random() * referenceSeq.length))
+    }
+    
+    // Generar posiciones aleatorias únicas para deleciones (que no coincidan con mutaciones)
+    const deletionPositions = new Set<number>()
+    while (deletionPositions.size < totalDeletions) {
+      const position = Math.floor(Math.random() * referenceSeq.length)
+      if (!mutationPositions.has(position)) {
+        deletionPositions.add(position)
+      }
+    }
+    
+    // Aplicar deleciones primero
+    deletionPositions.forEach(position => {
+      sequenceArray[position] = '-'
+    })
+    
+    // Aplicar mutaciones en las posiciones seleccionadas
+    mutationPositions.forEach(position => {
+      const currentBase = sequenceArray[position]
+      if (currentBase !== '-') { // Solo mutar si no es una deleción
+        const availableBases = bases.filter(base => base !== currentBase)
+        sequenceArray[position] = availableBases[Math.floor(Math.random() * availableBases.length)]
+      }
+    })
+    
+    return sequenceArray.join('')
+  }
+
   // --- Handler para cuando el usuario seleccione un archivo ---
   const handleFileChange = (e: ChangeEvent<HTMLInputElement>) => {
     setUploadMessage('') // limpiar mensajes previos
+    setSequenceLoaded(false) // resetear estado de secuencias
+    setReferenceSequence('')
+    setPatientSequence('')
+    
     const file = e.target.files?.[0] || null
     if (file) {
       // Validar extensión localmente (opcional)
@@ -137,6 +208,18 @@ const Perfil: React.FC = () => {
       const token = localStorage.getItem('token')
       if (!token) throw new Error('Token no encontrado')
 
+      // Leer el contenido del archivo FASTA localmente para extraer la secuencia
+      const fileContent = await selectedFile.text()
+      const extractedSequence = extractSequenceFromFasta(fileContent)
+      
+      if (extractedSequence.length === 0) {
+        setUploadMessage('Error: No se encontró una secuencia válida en el archivo FASTA')
+        return
+      }
+
+      // Generar secuencia del paciente con mutaciones simuladas
+      const patientSeq = generatePatientSequence(extractedSequence)
+
       // Preparamos FormData
       const formData = new FormData()
       formData.append('fasta_file', selectedFile)
@@ -153,7 +236,17 @@ const Perfil: React.FC = () => {
         }
       )
 
-      setUploadMessage('Archivo subido correctamente a S3')
+      // Guardar las secuencias en el estado
+      setReferenceSequence(extractedSequence)
+      setPatientSequence(patientSeq)
+      setSequenceLoaded(true)
+
+      const isLarge = extractedSequence.length > 2000
+      setUploadMessage(
+        `Archivo subido correctamente. Secuencia de ${extractedSequence.length.toLocaleString()} bases procesada.${
+          isLarge ? ' ⚡ Usando visualización optimizada para mejor rendimiento.' : ''
+        }`
+      )
     } catch (err: unknown) {
       console.error(err)
       const errorMessage = axios.isAxiosError(err) && err.response?.data?.detail 
@@ -232,8 +325,25 @@ const Perfil: React.FC = () => {
                   <p>No hay archivos cargados.</p>
                 </div>
               </div>
-            </div>
           </div>
+            </div>
+              {sequenceLoaded ? (
+                <DNAViewer
+                  sequence1={referenceSequence}
+                  sequence2={patientSequence}
+                  title1="Secuencia de Referencia (Archivo FASTA)"
+                  title2={`Secuencia del Paciente ${paciente.nombres} ${paciente.apellidos}`}
+                />
+              ) : (
+                <div className="perfil-card dna-placeholder">
+                  <div style={{ padding: '2rem', textAlign: 'center', color: '#6c757d' }}>
+                    <p>📧 Sube un archivo FASTA para visualizar las secuencias de ADN</p>
+                    <p style={{ fontSize: '0.875rem', marginTop: '0.5rem' }}>
+                      El visualizador mostrará la secuencia de referencia y generará una secuencia del paciente con mutaciones simuladas.
+                    </p>
+                  </div>
+                </div>
+              )}
         </main>
       </div>
 
