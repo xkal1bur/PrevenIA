@@ -198,6 +198,16 @@
   align-items: center;
   margin: 0.5rem 0;
 }
+.file-delete-btn{
+  margin-left:0.5rem;
+  background:#e74c3c;
+  color:white;
+  border:none;
+  padding:4px 8px;
+  border-radius:4px;
+  cursor:pointer;
+}
+.file-delete-btn:hover{ background:#c0392b; }
 
 .file-name {
   flex: 1;
