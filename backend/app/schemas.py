@@ -78,3 +78,17 @@ class PredictionsResponse(BaseModel):
     sample_used: str
     predictions: Dict[str, Dict[str, Any]]
     description: str
+    
+class NoteBase(BaseModel):
+    title: str
+    content: str
+
+class NoteCreate(NoteBase):
+    pass
+
+class NoteOut(NoteBase):
+    id: int
+    timestamp: datetime
+
+    class Config:
+        from_attributes = True
