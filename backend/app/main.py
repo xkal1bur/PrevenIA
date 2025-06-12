@@ -9,6 +9,8 @@ from database import SessionLocal, engine
 from fastapi.responses import JSONResponse
 from dotenv import load_dotenv
 from ml_inference import ml_service
+from fastapi.responses import StreamingResponse
+from urllib.parse import unquote
 
 models.Base.metadata.create_all(bind=engine)
 
@@ -48,7 +50,7 @@ s3_client = boto3.client(
     region_name=AWS_REGION
 )
 
-BUCKET_NAME = "prevenia-bucket-767397661639-1748963781163"
+BUCKET_NAME = "prevenia-bucket"
 
 
 ### ——— RUTAS PARA DOCTORES ——— ###
@@ -235,3 +237,64 @@ def get_predictions_for_patient(
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error obteniendo predicciones: {str(e)}")
+
+
+# LISTAR archivos en S3 para un paciente
+@app.get("/pacientes/{dni}/files", tags=["Pacientes"])
+def list_fasta_files(
+    dni: str,
+    current_doc: models.Doctor = Depends(auth.get_current_doctor)
+):
+    prefix = f"{dni}/"
+    resp = s3_client.list_objects_v2(Bucket=BUCKET_NAME, Prefix=prefix)
+    items = resp.get("Contents", [])
+    files = [
+        {
+            "filename": obj["Key"].replace(prefix, ""),
+            "key": obj["Key"],
+            "lastModified": obj["LastModified"].isoformat()
+        }
+        for obj in items if obj["Key"] != prefix
+    ]
+    return {"files": files}
+
+
+@app.get("/pacientes/{dni}/files/{filename}", tags=["Pacientes"])
+def download_fasta_file(
+    dni: str,
+    filename: str,
+    current_doc: models.Doctor = Depends(auth.get_current_doctor)
+):
+    key = f"{dni}/{filename}"
+    try:
+        obj = s3_client.get_object(Bucket=BUCKET_NAME, Key=key)
+        stream = obj["Body"]
+        headers = {
+            "Content-Disposition": f"attachment; filename={filename}"
+        }
+        return StreamingResponse(stream, media_type="application/octet-stream", headers=headers)
+    except s3_client.exceptions.NoSuchKey:
+        raise HTTPException(status_code=404, detail="Archivo no encontrado")
+    
+@app.get("/pacientes/{dni}/notes", response_model=list[schemas.NoteOut], tags=["Pacientes"])
+def list_notes(
+    dni: str,
+    db: Session = Depends(get_db),
+    current_doc: models.Doctor = Depends(auth.get_current_doctor)
+):
+    paciente = crud.get_paciente_por_dni(db, dni)
+    if not paciente or paciente.doctor_id != current_doc.id:
+        raise HTTPException(status_code=404, detail="Paciente no encontrado o no autorizado")
+    return crud.get_notes_for_patient(db, dni)
+
+@app.post("/pacientes/{dni}/notes", response_model=schemas.NoteOut, status_code=201, tags=["Pacientes"])
+def create_note(
+    dni: str,
+    note_in: schemas.NoteCreate,
+    db: Session = Depends(get_db),
+    current_doc: models.Doctor = Depends(auth.get_current_doctor)
+):
+    paciente = crud.get_paciente_por_dni(db, dni)
+    if not paciente or paciente.doctor_id != current_doc.id:
+        raise HTTPException(status_code=404, detail="Paciente no encontrado o no autorizado")
+    return crud.create_note_for_patient(db, dni, note_in)

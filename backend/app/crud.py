@@ -93,3 +93,17 @@ def get_pacientes_por_doctor(db: Session, doctor_id: int) -> List[models.Pacient
           .filter(models.Paciente.doctor_id == doctor_id)
           .all()
     )
+    
+def get_notes_for_patient(db: Session, dni: str):
+    return db.query(models.Note).filter(models.Note.patient_dni == dni).order_by(models.Note.timestamp.desc()).all()
+
+def create_note_for_patient(db: Session, dni: str, note: schemas.NoteCreate):
+    db_note = models.Note(
+        patient_dni=dni,
+        title=note.title,
+        content=note.content
+    )
+    db.add(db_note)
+    db.commit()
+    db.refresh(db_note)
+    return db_note
