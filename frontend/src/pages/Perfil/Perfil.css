@@ -11,9 +11,8 @@
   margin-left: 220px;
   background-color: #d9e8ff;
   min-height: 100vh;
-  transition: margin-left 0.3s ease-in-out, width 0.3s ease-in-out;
+  transition: margin-left 0.3s ease, width 0.3s ease;
 }
-
 
 .perfil-main {
   flex: 1;
@@ -26,7 +25,7 @@
   justify-content: center;
   align-items: center;
   height: 100vh;
-  margin-left: 220px;  
+  margin-left: 220px;
 }
 
 .home-loading p {
@@ -41,12 +40,17 @@
 }
 
 .perfil-card {
-  background-color: white;
+  background-color: #fff;
   border-radius: 12px;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.1);
+  box-shadow: 0 2px 6px rgba(0,0,0,0.1);
   overflow: hidden;
-  text-align: center;
   padding-bottom: 16px;
+  box-sizing: border-box;
+}
+
+/* 1) Má​rgen entre foto y datos */
+.perfil-left .foto-card {
+  margin-bottom: 20px;
 }
 
 .foto-card {
@@ -79,24 +83,62 @@
   color: #555;
 }
 
+.btn-predictions {
+  margin: 1rem 16px;
+  padding: 0.5rem 1rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  background-color: #7da7f4;
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.9rem;
+  transition: background 0.2s;
+  width: calc(100% - 32px);
+}
+
+.btn-predictions:hover {
+  background-color: #5c8de0;
+}
+
+/* Upload Profesional */
 .upload-card {
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
   padding: 30px 15px;
   gap: 15px;
+  margin-bottom: 24px;
 }
 
 .upload-box {
-  flex: 1;
   width: 100%;
-  border: 2px dashed #777;
-  border-radius: 6px;
+  min-height: 120px;
+  border: 2px dashed #7a7a7a;
+  border-radius: 8px;
   display: flex;
+  flex-direction: column;
   justify-content: center;
   align-items: center;
-  color: #777;
+  cursor: pointer;
+  transition: background 0.2s, border-color 0.2s;
+  color: #555;
+}
+
+.upload-box:hover {
+  background: rgba(0,0,0,0.03);
+  border-color: #5a5a5a;
+}
+
+.upload-box p {
+  margin-top: 0.5rem;
+  font-size: 0.9rem;
+}
+
+.file-input {
+  display: none;
 }
 
 .upload-button {
@@ -107,30 +149,221 @@
   border-radius: 6px;
   cursor: pointer;
   font-size: 0.875rem;
-  transition: background-color 0.2s;
+  transition: background 0.2s;
 }
 
 .upload-button:hover {
   background-color: #5c8de0;
 }
 
+.upload-message {
+  margin-top: 0.75rem;
+  font-size: 0.9rem;
+  color: #2a7f2a;
+}
+
+/* Archivos Cargados */
+/* 2) Márgen inferior igual al de datos */
+.perfil-right .files-card {
+  margin-bottom: 20px;
+}
+
 .files-card {
   padding: 16px;
+  height: 175px;
+  max-height: 175px;
 }
 
 .files-box {
-  height: 200px;
+  max-height: 200px;
   width: 100%;
   border: 2px solid #777;
   border-radius: 6px;
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  color: #777;
-  font-size: 0.875rem;
+  padding: 12px;
   background-color: #f9f9f9;
+  overflow-y: auto;
+  text-align: right;
+  box-sizing: border-box;
 }
 
+.files-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.file-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin: 0.5rem 0;
+}
+.file-delete-btn{
+  margin-left:0.5rem;
+  background:#e74c3c;
+  color:white;
+  border:none;
+  padding:4px 8px;
+  border-radius:4px;
+  cursor:pointer;
+}
+.file-delete-btn:hover{ background:#c0392b; }
+
+.file-name {
+  flex: 1;
+  text-align: left;
+  color: #3a5abb;
+  cursor: pointer;
+}
+
+.file-name:hover {
+  text-decoration: underline;
+}
+
+.file-date {
+  margin-left: 1rem;
+  color: #555;
+  font-size: 0.85rem;
+  white-space: nowrap;
+}
+
+.file-download-btn {
+  margin-left: 12px;
+  padding: 4px 8px;
+  background-color: #7da7f4;
+  color: #fff;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.75rem;
+  transition: background 0.2s;
+}
+
+.file-download-btn:hover {
+  background-color: #5c8de0;
+}
+
+
+
+/* Agenda de Apuntes (full width) */
+.notes-card {
+  background-color: #fff;
+  border-radius: 12px;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.1);
+  padding: 16px;
+  margin: 24px 0;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.notes-header {
+  margin: 0 0 12px;
+  font-size: 1.125rem;
+  color: #333;
+  border-bottom: 2px solid #7da7f4;
+  display: inline-block;
+  padding-bottom: 4px;
+}
+
+.notes-container {
+  display: flex;
+  gap: 16px;
+}
+
+.notes-form {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.notes-input,
+.notes-textarea {
+  width: 100%;
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  padding: 8px;
+  font-size: 0.9rem;
+  box-sizing: border-box;
+  transition: border-color 0.2s;
+}
+
+.notes-input:focus,
+.notes-textarea:focus {
+  outline: none;
+  border-color: #7da7f4;
+}
+
+.notes-textarea {
+  resize: vertical;
+  min-height: 60px;
+}
+
+.notes-add-btn {
+  align-self: flex-end;
+  padding: 6px 14px;
+  background-color: #7da7f4;
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.9rem;
+  transition: background 0.2s;
+}
+
+.notes-add-btn:hover {
+  background-color: #5c8de0;
+}
+
+.notes-list {
+  flex: 1;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+.note-item {
+  border-left: 4px solid #7da7f4;
+  padding: 8px 12px;
+  margin-bottom: 12px;
+  background-color: #f4f8ff;
+  border-radius: 0 6px 6px 0;
+}
+
+.note-timestamp {
+  font-size: 0.75rem;
+  color: #666;
+  margin-bottom: 4px;
+}
+
+.note-title {
+  font-weight: 600;
+  color: #333;
+  font-size: 1rem;
+  margin-bottom: 6px;
+}
+
+.note-content {
+  font-size: 0.875rem;
+  color: #444;
+  line-height: 1.4;
+}
+
+/* DNA Placeholder */
+.dna-placeholder {
+  width: 100%;
+  margin-top: 20px;
+}
+
+.dna-placeholder-text {
+  padding: 2rem;
+  text-align: center;
+  color: #6c757d;
+}
+
+/* Responsive */
 @media (max-width: 767px) {
   .perfil-content {
     width: 100%;
@@ -151,6 +384,14 @@
   }
 
   .files-box {
-    height: 150px;
+    max-height: 150px;
+  }
+
+  .notes-container {
+    flex-direction: column;
+  }
+
+  .notes-add-btn {
+    width: 100%;
   }
 }

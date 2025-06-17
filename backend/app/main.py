@@ -9,7 +9,9 @@ from database import SessionLocal, engine
 from fastapi.responses import JSONResponse
 from dotenv import load_dotenv
 from ml_inference import ml_service
-
+from fastapi.responses import StreamingResponse
+from urllib.parse import unquote
+import re
 models.Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="API del Prevenia")
@@ -48,7 +50,7 @@ s3_client = boto3.client(
     region_name=AWS_REGION
 )
 
-BUCKET_NAME = "prevenia-bucket-767397661639-1748963781163"
+BUCKET_NAME = "prevenia-bucket"
 
 
 ### ——— RUTAS PARA DOCTORES ——— ###
@@ -235,3 +237,150 @@ def get_predictions_for_patient(
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error obteniendo predicciones: {str(e)}")
+
+
+# LISTAR archivos en S3 para un paciente
+@app.get("/pacientes/{dni}/files", tags=["Pacientes"])
+def list_fasta_files(
+    dni: str,
+    current_doc: models.Doctor = Depends(auth.get_current_doctor)
+):
+    prefix = f"{dni}/"
+    resp = s3_client.list_objects_v2(Bucket=BUCKET_NAME, Prefix=prefix)
+    items = resp.get("Contents", [])
+    files = [
+        {
+            "filename": obj["Key"].replace(prefix, ""),
+            "key": obj["Key"],
+            "lastModified": obj["LastModified"].isoformat()
+        }
+        for obj in items if obj["Key"] != prefix
+    ]
+    return {"files": files}
+
+
+@app.get("/pacientes/{dni}/files/{filename}", tags=["Pacientes"])
+def download_fasta_file(
+    dni: str,
+    filename: str,
+    current_doc: models.Doctor = Depends(auth.get_current_doctor)
+):
+    key = f"{dni}/{filename}"
+    try:
+        obj = s3_client.get_object(Bucket=BUCKET_NAME, Key=key)
+        stream = obj["Body"]
+        headers = {
+            "Content-Disposition": f"attachment; filename={filename}"
+        }
+        return StreamingResponse(stream, media_type="application/octet-stream", headers=headers)
+    except s3_client.exceptions.NoSuchKey:
+        raise HTTPException(status_code=404, detail="Archivo no encontrado")
+    
+@app.get("/pacientes/{dni}/notes", response_model=list[schemas.NoteOut], tags=["Pacientes"])
+def list_notes(
+    dni: str,
+    db: Session = Depends(get_db),
+    current_doc: models.Doctor = Depends(auth.get_current_doctor)
+):
+    paciente = crud.get_paciente_por_dni(db, dni)
+    if not paciente or paciente.doctor_id != current_doc.id:
+        raise HTTPException(status_code=404, detail="Paciente no encontrado o no autorizado")
+    return crud.get_notes_for_patient(db, dni)
+
+@app.post("/pacientes/{dni}/notes", response_model=schemas.NoteOut, status_code=201, tags=["Pacientes"])
+def create_note(
+    dni: str,
+    note_in: schemas.NoteCreate,
+    db: Session = Depends(get_db),
+    current_doc: models.Doctor = Depends(auth.get_current_doctor)
+):
+    paciente = crud.get_paciente_por_dni(db, dni)
+    if not paciente or paciente.doctor_id != current_doc.id:
+        raise HTTPException(status_code=404, detail="Paciente no encontrado o no autorizado")
+    return crud.create_note_for_patient(db, dni, note_in)
+
+# ――― ELIMINAR un archivo FASTA del S3 ――― #
+@app.delete(
+    "/pacientes/{dni}/files/{filename}",        # usa {filename:path} si algún día admites subcarpetas
+    status_code=204,                            # 204 No Content: OK y sin body
+    tags=["Pacientes"]
+)
+def delete_fasta_file(
+    dni: str,
+    filename: str,
+    db: Session = Depends(get_db),
+    current_doc: models.Doctor = Depends(auth.get_current_doctor)
+):
+    """
+    Borra un archivo FASTA del bucket S3 para el paciente indicado.
+    El doctor autenticado debe ser el dueño del paciente.
+    """
+    # 1. Verificar que el paciente exista y pertenezca al doctor logueado
+    paciente = crud.get_paciente_por_dni(db, dni)
+    if not paciente or paciente.doctor_id != current_doc.id:
+        raise HTTPException(status_code=404, detail="Paciente no encontrado o no autorizado")
+    
+    # 2. Construir la clave S3 y eliminar
+    key = f"{dni}/{filename}"
+    try:
+        s3_client.delete_object(Bucket=BUCKET_NAME, Key=key)
+    except s3_client.exceptions.NoSuchKey:
+        raise HTTPException(status_code=404, detail="Archivo no encontrado")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error eliminando de S3: {e}")
+    
+    # 3. 204 significa “todo bien” y no se envía contenido
+    return
+
+
+def natural_key(fname: str) -> tuple[int, str]:
+    """
+    Extrae el último número que aparezca en el nombre (por ejemplo, 'default_part_9.fasta' → 9)
+    y lo devuelve como clave de orden.  Si no hay número, usa 0.
+    """
+    m = re.findall(r'\d+', fname)
+    num = int(m[-1]) if m else 0
+    return (num, fname)    
+
+@app.get("/split_fasta_files", tags=["Reference FASTA"])
+def list_reference_fastas():
+    prefix = "split_fasta_files/"
+    resp   = s3_client.list_objects_v2(Bucket=BUCKET_NAME, Prefix=prefix)
+    items  = resp.get("Contents", [])
+
+    # nombres sin la carpeta
+    files = [
+        obj["Key"].replace(prefix, "")
+        for obj in items
+        if obj["Key"] != prefix
+    ]
+
+    # ordenar por número (y luego por nombre)
+    files.sort(key=natural_key)
+
+    return {"files": files}
+
+
+# 2) Descargar un archivo concreto para enviarlo al front-end
+@app.get("/split_fasta_files/{filename}", tags=["Reference FASTA"])
+def get_reference_fasta(filename: str):
+    """
+    Descarga un FASTA de la carpeta split_fasta_files/ y lo envía como texto.
+    """
+    key = f"split_fasta_files/{filename}"
+
+    try:
+        obj    = s3_client.get_object(Bucket=BUCKET_NAME, Key=key)
+        stream = obj["Body"]                               # streaming S3
+        headers = {
+            "Content-Disposition": f"attachment; filename={filename}"
+        }
+        return StreamingResponse(
+            stream,
+            media_type="text/plain",       # FASTA = texto plano
+            headers=headers
+        )
+    except s3_client.exceptions.NoSuchKey:
+        raise HTTPException(status_code=404, detail="Archivo de referencia no encontrado")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error obteniendo archivo: {e}")
