@@ -1,5 +1,13 @@
 import React, { useState, useRef, useCallback, useEffect, useMemo } from 'react'
+import axios from 'axios'
 import './DNAViewer.css'
+
+const extractSequenceFromFasta = (text: string): string =>
+  text
+    .split("\n")
+    .filter(l => !l.startsWith(">") && l.trim())
+    .map(l => l.trim().toUpperCase().replace(/[^ATCG]/g, ""))
+    .join("")
 
 interface DNAViewerProps {
   sequence1?: string
@@ -10,12 +18,13 @@ interface DNAViewerProps {
 }
 
 const DNAViewer: React.FC<DNAViewerProps> = ({ 
-  sequence1 = "ATCGATCGATCGAAGGCTACGTACGTACGTATCGATCGATCGCCGTTAAGGCCTACGTACGTAATCGATCGATCGAAGGCTACGTACGTACGTATCGATCGATCGCCGTTAAGGCCTACGTACGTAATCGATCGATCGAAGGCTACGTACGTACGTATCGATCGATCGCCGTTAAGGCCTACGTACGT", 
+  sequence1: initialSeq1 = "ATCGATCGATCGAAGGCTACGTACGTACGTATCGATCGATCGCCGTTAAGGCCTACGTACGTAATCGATCGATCGAAGGCTACGTACGTACGTATCGATCGATCGCCGTTAAGGCCTACGTACGTAATCGATCGATCGAAGGCTACGTACGTACGTATCGATCGATCGCCGTTAAGGCCTACGTACGT", 
   sequence2 = "ATCGATCGATCGAAGGCTACGTCCGTACGTATCGATCGATCGCCGTTAAGGCCTACGTACGTAATCGATCGATCGAAGGCTACGTACGTACGTATCGATCGATCGCCGTTAAGGCCTACGTACGTAATCGATCGATCGAAGGCTACGTACGTACGTATCGATCGATCGCCGTTAAGGCCTACGTACGT",
   title1 = "Secuencia Referencia",
   title2 = "Secuencia Paciente",
   allowExport = true
 }) => {
+  const [sequence1, setSequence1] = useState<string>(initialSeq1)
   const [zoomLevel, setZoomLevel] = useState<number>(1)
   const [viewStart, setViewStart] = useState<number>(0)
   const [selection, setSelection] = useState<{ start: number; end: number } | null>(null)
@@ -23,7 +32,9 @@ const DNAViewer: React.FC<DNAViewerProps> = ({
   const [selectionStart, setSelectionStart] = useState<number>(0)
   
   const sequenceRef = useRef<HTMLDivElement>(null)
-  
+  const [refFiles, setRefFiles] = useState<string[]>([])
+  const [showRefPicker, setShowRefPicker] = useState(false)
+
   // Constantes para optimización de rendimiento
   const MAX_VISIBLE_BASES = 500 // Máximo número de bases a renderizar a la vez
   const CHUNK_SIZE = 100 // Tamaño de chunk para cálculos
@@ -131,6 +142,46 @@ const DNAViewer: React.FC<DNAViewerProps> = ({
       setZoomLevel(prev => Math.max(prev - 1, 1))
     }
   }
+
+  const loadRefFiles = useCallback(async () => {
+    try {
+      const res = await axios.get<{ files: string[] }>(
+        "http://localhost:8000/reference-files"
+      );
+      setRefFiles(res.data.files || []);
+    } catch (err) {
+      console.error("Error listando archivos de referencia:", err);
+      setRefFiles([]);       // asegúrate de limpiar en caso de error
+    }
+  }, []);
+
+  const handleOpenPicker = () => {
+    setShowRefPicker(true)
+    loadRefFiles()
+  }
+
+  const handleReferenceSelect = useCallback(
+    async (key: string) => {
+      try {
+        // extraemos solo el nombre de archivo
+        const filename = key.replace("split_fasta_files/", "");
+        // lo traemos de tu endpoint FastAPI
+        const res = await axios.get<string>(
+          `http://localhost:8000/split_fasta_files/${encodeURIComponent(filename)}`,
+          { responseType: "text" }
+        );
+        // limpiamos la cadena y la guardamos como nueva referencia
+        const seq = extractSequenceFromFasta(res.data);
+        setSequence1(seq);
+      } catch (err) {
+        console.error("Error cargando referencia:", err);
+        alert("No se pudo cargar el archivo de referencia.");
+      } finally {
+        setShowRefPicker(false);
+      }
+    },
+    []
+  );
 
   const zoomToSelection = () => {
     if (selection) {
@@ -450,30 +501,35 @@ const DNAViewer: React.FC<DNAViewerProps> = ({
 
       <div className={`dna-sequences ${isZoomedIn ? 'zoomed' : 'full-view'}`} ref={sequenceRef}>
         <div className="sequence-row">
-          <div className="sequence-label">{title1}:</div>
+          <div className="sequence-label" style={{ display: 'flex', flexDirection: 'column' }}>
+            {title1}:
+            <button
+              className="control-btn"
+              style={{ marginTop: '0.25rem', alignSelf: 'flex-start' }}
+              onClick={handleOpenPicker}
+            >
+              Seleccionar Archivo Ref
+            </button>
+          </div>
+          
           <div className="sequence-display">
-            {displayResult1.map((item, index) => {
-              const isDeletion = item.char === '-'
-              const baseClass = isDeletion ? 'deletion' : (!item.isMatch ? 'mismatch' : 'match')
-              
-              return (
-                <span
-                  key={`seq1-${index}`}
-                  className={`base ${baseClass} ${isInSelection(item.index) ? 'selected' : ''}`}
-                  title={`Posición ${item.index + 1}: ${isDeletion ? 'Deleción' : item.char}`}
-                  onMouseDown={() => handleMouseDown(index)}
-                  onMouseMove={() => handleMouseMove(index)}
-                  onMouseUp={handleMouseUp}
-                  style={{ 
-                    fontSize: `${baseSize}rem`,
-                    padding: `${baseSize * 0.1}rem ${baseSize * 0.2}rem`,
-                    margin: `${baseSize * 0.05}rem`
-                  }}
-                >
-                  {isDeletion ? '-' : item.char}
-                </span>
-              )
-            })}
+            {displayResult1.map((item, index) => (
+              <span
+                key={`seq1-${index}`}
+                className={`base ${item.char === '-' ? 'deletion' : (!item.isMatch ? 'mismatch' : 'match')}`}
+                title={`Posición ${item.index + 1}: ${item.char === '-' ? 'Deleción' : item.char}`}
+                onMouseDown={() => handleMouseDown(index)}
+                onMouseMove={() => handleMouseMove(index)}
+                onMouseUp={handleMouseUp}
+                style={{
+                  fontSize: `${baseSize}rem`,
+                  padding: `${baseSize * 0.1}rem ${baseSize * 0.2}rem`,
+                  margin: `${baseSize * 0.05}rem`
+                }}
+              >
+                {item.char === '-' ? '-' : item.char}
+              </span>
+            ))}
           </div>
         </div>
 
@@ -512,6 +568,51 @@ const DNAViewer: React.FC<DNAViewerProps> = ({
         </div>
       )}
 
+      {showRefPicker && (
+        <div className="modal-overlay">
+          <div className="modal-content ref-picker-modal">
+            {/* Header */}
+            <div className="modal-header">
+              <h4>Archivos de Referencia</h4>
+              <button
+                className="modal-close-btn"
+                onClick={() => setShowRefPicker(false)}
+              >
+                ×
+              </button>
+            </div>
+
+            {/* Body */}
+            <div className="modal-body">
+              {refFiles.length === 0 ? (
+                <p className="empty-text">No se encontraron archivos.</p>
+              ) : (
+                <ul className="ref-list">
+                  {(refFiles || []).map(key => (
+                    <li
+                      key={key}
+                      className="ref-list-item"
+                      onClick={() => handleReferenceSelect(key)}
+                    >
+                      {key.replace('split_fasta_files/', '')}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+
+            {/* Footer */}
+            <div className="modal-footer">
+              <button
+                className="control-btn"
+                onClick={() => setShowRefPicker(false)}
+              >
+                Cerrar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       <div className="dna-legend">
         <div className="legend-item">
           <span className="legend-color match"></span>
