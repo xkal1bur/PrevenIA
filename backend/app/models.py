@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, ForeignKey, DateTime
+from sqlalchemy import Column, Integer, String, ForeignKey, DateTime, Text
 from sqlalchemy.orm import relationship
 from database import Base
 from datetime import datetime
@@ -29,4 +29,15 @@ class Paciente(Base):
 
     doctor_id = Column(Integer, ForeignKey("doctor.id"), nullable=False)
     doctor = relationship("Doctor", back_populates="pacientes")
+    notes = relationship("Note", back_populates="paciente", cascade="all, delete-orphan")
 
+class Note(Base):
+    __tablename__ = "notes"
+
+    id = Column(Integer, primary_key=True, index=True)
+    patient_dni = Column(String, ForeignKey("paciente.dni"), nullable=False, index=True)
+    title       = Column(String(200), nullable=False)
+    content     = Column(Text, nullable=False)
+    timestamp   = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    paciente = relationship("Paciente", back_populates="notes")
