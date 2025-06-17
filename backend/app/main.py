@@ -384,3 +384,15 @@ def get_reference_fasta(filename: str):
         raise HTTPException(status_code=404, detail="Archivo de referencia no encontrado")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error obteniendo archivo: {e}")
+    
+    
+@app.get("/reference-files")
+def list_reference_files():
+    s3 = boto3.client("s3")  # boto3 leerá las credenciales de tu entorno
+    resp = s3.list_objects_v2(
+        Bucket="prevenia-bucket",
+        Prefix="split_fasta_files/"
+    )
+    keys = [o["Key"] for o in resp.get("Contents", [])]
+    return {"files": keys}
+
