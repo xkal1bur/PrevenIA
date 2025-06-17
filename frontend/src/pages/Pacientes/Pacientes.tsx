@@ -1,11 +1,8 @@
-// src/pages/Pacientes/Pacientes.tsx
-
 import React, { useState, useEffect } from 'react'
-import type { ChangeEvent, FormEvent } from 'react'
+import type { ChangeEvent, FormEvent, DragEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import axios from 'axios'
-import { FiPlus, FiX } from 'react-icons/fi'
-
+import { FiPlus, FiX, FiUploadCloud } from 'react-icons/fi'
 import Sidebar from '../../components/Sidebar'
 import Topbar from '../../components/Topbar'
 import './Pacientes.css'
@@ -54,6 +51,7 @@ const Pacientes: React.FC = () => {
   })
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false)
   const [submitError, setSubmitError] = useState<string | null>(null)
+  const [highlightDrag, setHighlightDrag] = useState(false)
 
   /* Función para cerrar sesión */
   const handleLogout = (): void => {
@@ -104,16 +102,6 @@ const Pacientes: React.FC = () => {
         setErrorPacientes('No se pudo cargar la lista de pacientes.')
       })
   }, [doctorId])
-
-  /* Manejador de cambios en el formulario de creación */
-  const handleInputChange = (e: ChangeEvent<HTMLInputElement>) => {
-    const { name, value, files } = e.target
-    if (name === 'foto' && files) {
-      setFormData((prev) => ({ ...prev, foto: files[0] }))
-    } else {
-      setFormData((prev) => ({ ...prev, [name]: value }))
-    }
-  }
 
   /* Enviar formulario para crear nuevo paciente */
   const handleSubmit = async (e: FormEvent<HTMLFormElement>) => {
@@ -173,6 +161,56 @@ const Pacientes: React.FC = () => {
     } finally {
       setIsSubmitting(false)
     }
+  }
+
+  /* ----------  handlers drop-zone foto  ---------- */
+  const handleDragOver = (e: DragEvent<HTMLLabelElement>) => {
+    e.preventDefault()
+    setHighlightDrag(true)
+  }
+
+  const handleDragLeave = () => setHighlightDrag(false)
+
+  const handleDrop = (e: DragEvent<HTMLLabelElement>) => {
+    e.preventDefault()
+    setHighlightDrag(false)
+    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+      const file = e.dataTransfer.files[0]
+      setFormData(prev => ({ ...prev, foto: file }))
+    }
+  }
+
+  /* ----------  cambio input genérico con filtrado ---------- */
+  const handleInputChange = (e: ChangeEvent<HTMLInputElement>) => {
+    const { name, value, files } = e.target
+
+    if (name === 'foto' && files) {
+      setFormData(prev => ({ ...prev, foto: files[0] }))
+      return
+    }
+
+    let sanitized = value
+
+    switch (name) {
+      case 'dni':
+      case 'celular':
+        // sólo dígitos
+        sanitized = value.replace(/\D/g, '')
+        break
+      case 'nombres':
+      case 'apellidos':
+        // sólo letras y espacios (incluye acentos y ñ)
+        sanitized = value.replace(/[^A-Za-zÁÉÍÓÚáéíóúÑñ ]/g, '')
+        break
+      case 'edad':
+        // números sólo
+        sanitized = value.replace(/\D/g, '')
+        break
+      default:
+        break
+    }
+
+    setFormData(prev => ({ ...prev, [name]: sanitized }))
   }
 
   return (
@@ -252,95 +290,127 @@ const Pacientes: React.FC = () => {
             >
               <FiX size={24} />
             </button>
-            <h3>Agregar Nuevo Paciente</h3>
+
+            <h3 className="modal-title">Agregar Nuevo Paciente</h3>
+
             <form className="paciente-form" onSubmit={handleSubmit}>
-              <label>
-                DNI:
+              <div className="form-field">
+                <label htmlFor="dni">DNI</label>
                 <input
-                  type="text"
+                  id="dni"
                   name="dni"
                   value={formData.dni}
                   onChange={handleInputChange}
+                  inputMode="numeric"
+                  pattern="\d*"
+                  maxLength={8}
                   required
                 />
-              </label>
-              <label>
-                Nombres:
+              </div>
+
+              <div className="form-field">
+                <label htmlFor="nombres">Nombres</label>
                 <input
-                  type="text"
+                  id="nombres"
                   name="nombres"
                   value={formData.nombres}
                   onChange={handleInputChange}
+                  inputMode="text"
+                  pattern="[A-Za-zÁÉÍÓÚáéíóúÑñ ]+"
                   required
                 />
-              </label>
-              <label>
-                Apellidos:
+              </div>
+
+              <div className="form-field">
+                <label htmlFor="apellidos">Apellidos</label>
                 <input
-                  type="text"
+                  id="apellidos"
                   name="apellidos"
                   value={formData.apellidos}
                   onChange={handleInputChange}
+                  inputMode="text"
+                  pattern="[A-Za-zÁÉÍÓÚáéíóúÑñ ]+"
                   required
                 />
-              </label>
-              <label>
-                Edad:
+              </div>
+
+              <div className="form-field">
+                <label htmlFor="edad">Edad</label>
                 <input
-                  type="number"
+                  id="edad"
                   name="edad"
+                  type="number"
                   value={formData.edad}
                   onChange={handleInputChange}
+                  min={0}
                   required
-                  min="0"
                 />
-              </label>
-              <label>
-                Celular:
+              </div>
+
+              <div className="form-field">
+                <label htmlFor="celular">Celular</label>
                 <input
-                  type="text"
+                  id="celular"
                   name="celular"
                   value={formData.celular}
                   onChange={handleInputChange}
+                  inputMode="numeric"
+                  pattern="\d*"
+                  maxLength={9}
                   required
                 />
-              </label>
-              <label>
-                Correo:
+              </div>
+
+              <div className="form-field">
+                <label htmlFor="correo">Correo</label>
                 <input
-                  type="email"
+                  id="correo"
                   name="correo"
+                  type="email"
                   value={formData.correo}
                   onChange={handleInputChange}
                   required
                 />
-              </label>
-              <label>
-                Foto:
-                <input
-                  type="file"
-                  name="foto"
-                  accept="image/*"
-                  onChange={handleInputChange}
-                />
-              </label>
+              </div>
 
-              {submitError && (
-                <p className="submit-error-text">{submitError}</p>
-              )}
+              <div className="form-field full-width">
+                <label
+                  htmlFor="foto-input"
+                  className={`drop-zone ${highlightDrag ? 'drag-over' : ''}`}
+                  onDragOver={handleDragOver}
+                  onDragLeave={handleDragLeave}
+                  onDrop={handleDrop}
+                >
+                  {formData.foto ? (
+                    <div className="drop-zone-filename">
+                      📁 {formData.foto.name}
+                    </div>
+                  ) : (
+                    <div className="drop-zone-placeholder">
+                      <FiUploadCloud size={40} />
+                      <p>Click o arrastra tu foto aquí</p>
+                    </div>
+                  )}
+                  <input
+                    id="foto-input"
+                    type="file"
+                    name="foto"
+                    accept="image/*"
+                    onChange={handleInputChange}
+                    className="file-hidden"
+                  />
+                </label>
+              </div>
 
-              <button
-                type="submit"
-                className="btn-submit-paciente"
-                disabled={isSubmitting}
-              >
-                {isSubmitting ? 'Guardando...' : 'Guardar'}
+              {submitError && <p className="submit-error-text">{submitError}</p>}
+
+              <button type="submit" className="btn-submit-paciente" disabled={isSubmitting}>
+                {isSubmitting ? 'Guardando…' : 'Guardar'}
               </button>
             </form>
           </div>
         </div>
       )}
-
     </div>
   )
 }

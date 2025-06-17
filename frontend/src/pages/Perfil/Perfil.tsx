@@ -1,11 +1,3 @@
-/* ===========================================================================
- *  Perfil.tsx — versión “solo sequence2” (sin mutaciones)
- *    • Cuando el usuario hace clic en un FASTA:
- *        - Extraemos la secuencia → patientSeq
- *        - Enviamos SOLO sequence2 al <DNAViewer>
- *    • sequence1 no se pasa (DNAViewer mantiene su valor por defecto).
- *    • Incluye: subir, descargar, eliminar archivos, agenda de notas, modal ML.
- * ========================================================================== */
 import React, { useEffect, useState, type ChangeEvent } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import axios from 'axios'

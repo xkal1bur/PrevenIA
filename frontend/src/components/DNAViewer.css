@@ -354,6 +354,81 @@
   font-style: italic;
 }
 
+.modal-overlay {
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 999;
+}
+
+/* contenedor principal */
+.ref-picker-modal {
+  background: #fff;
+  border-radius: 8px;
+  width: 400px;
+  max-width: 90%;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+  overflow: hidden;
+}
+
+/* Header */
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid #e0e0e0;
+}
+.modal-header h4 {
+  margin: 0;
+  font-size: 1.1rem;
+}
+.modal-close-btn {
+  background: none;
+  border: none;
+  font-size: 1.25rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+/* Body */
+.modal-body {
+  padding: 0.5rem 1rem;
+  max-height: 300px;
+  overflow-y: auto;
+}
+.empty-text {
+  color: #666;
+  text-align: center;
+  margin-top: 1rem;
+}
+.ref-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.ref-list-item {
+  padding: 0.5rem;
+  border-bottom: 1px solid #f0f0f0;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+.ref-list-item:hover {
+  background: #fafafa;
+}
+
+/* Footer */
+.modal-footer {
+  padding: 0.75rem 1rem;
+  border-top: 1px solid #e0e0e0;
+  text-align: right;
+}
+
 /* Animaciones */
 @keyframes highlight {
   0% {
