@@ -50,7 +50,7 @@ s3_client = boto3.client(
     region_name=AWS_REGION
 )
 
-BUCKET_NAME = "prevenia-bucket"
+BUCKET_NAME = "prevenia-bucket-339712906940-1750164681373"
 
 
 ### ——— RUTAS PARA DOCTORES ——— ###

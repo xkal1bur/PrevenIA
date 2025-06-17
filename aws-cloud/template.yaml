@@ -408,7 +408,7 @@ Resources:
         ServerSideEncryptionConfiguration:
           - ServerSideEncryptionByDefault:
               SSEAlgorithm: AES256
-      BucketName: prevenia-bucket-767397661639
+      BucketName: prevenia-bucket-2
       CorsConfiguration:
         CorsRules:
           - AllowedHeaders:
