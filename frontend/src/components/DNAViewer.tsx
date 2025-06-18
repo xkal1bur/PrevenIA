@@ -15,134 +15,390 @@ interface DNAViewerProps {
   title1?: string
   title2?: string
   allowExport?: boolean
+  patientFiles?: string[] // Array de nombres de archivos del paciente
+  patientDni?: string
+  autoLoadPosition?: number // Posición automática para cargar
+  referenceFilename?: string // Nombre del archivo de referencia a cargar automáticamente
+  patientChunkNumber?: number // Número específico del chunk del paciente a cargar (1-1000)
+  totalSequenceLength?: number // Longitud total de la secuencia (para chunks alineados)
+  hasAlignedSequences?: boolean // Si las secuencias están alineadas con BLAST
+  // Nueva prop para información de navegación de BLAST
+  blastNavigationInfo?: {
+    match_start_position: number;
+    match_end_position: number;
+    recommended_chunk: number;
+    position_in_chunk: number;
+  }
+}
+
+interface SequenceChunk {
+  data: string
+  startPosition: number
+  endPosition: number
+}
+
+interface FragmentCache {
+  [key: string]: string
 }
 
 const DNAViewer: React.FC<DNAViewerProps> = ({ 
-  sequence1: initialSeq1 = "ATCGATCGATCGAAGGCTACGTACGTACGTATCGATCGATCGCCGTTAAGGCCTACGTACGTAATCGATCGATCGAAGGCTACGTACGTACGTATCGATCGATCGCCGTTAAGGCCTACGTACGTAATCGATCGATCGAAGGCTACGTACGTACGTATCGATCGATCGCCGTTAAGGCCTACGTACGT", 
-  sequence2 = "ATCGATCGATCGAAGGCTACGTCCGTACGTATCGATCGATCGCCGTTAAGGCCTACGTACGTAATCGATCGATCGAAGGCTACGTACGTACGTATCGATCGATCGCCGTTAAGGCCTACGTACGTAATCGATCGATCGAAGGCTACGTACGTACGTATCGATCGATCGCCGTTAAGGCCTACGTACGT",
+  sequence1: initialSeq1 = "", 
   title1 = "Secuencia Referencia",
   title2 = "Secuencia Paciente",
-  allowExport = true
+  allowExport = true,
+  patientFiles = [],
+  patientDni,
+  autoLoadPosition = 0,
+  referenceFilename,
+  patientChunkNumber,
+  totalSequenceLength,
+  hasAlignedSequences = false,
+  blastNavigationInfo
 }) => {
-  const [sequence1, setSequence1] = useState<string>(initialSeq1)
-  const [zoomLevel, setZoomLevel] = useState<number>(1)
+  const [referenceSequence, setReferenceSequence] = useState<string>(initialSeq1)
   const [viewStart, setViewStart] = useState<number>(0)
-  const [selection, setSelection] = useState<{ start: number; end: number } | null>(null)
-  const [isSelecting, setIsSelecting] = useState<boolean>(false)
-  const [selectionStart, setSelectionStart] = useState<number>(0)
+  const [totalLength, setTotalLength] = useState<number>(0)
+  const [currentChunk, setCurrentChunk] = useState<SequenceChunk | null>(null)
+  const [patientChunk, setPatientChunk] = useState<SequenceChunk | null>(null)
+  const [loading, setLoading] = useState<boolean>(false)
+  
+  // Cache para fragmentos ya descargados
+  const [patientFragmentCache, setPatientFragmentCache] = useState<FragmentCache>({})
+  const [referenceFragmentCache, setReferenceFragmentCache] = useState<FragmentCache>({})
   
   const sequenceRef = useRef<HTMLDivElement>(null)
   const [refFiles, setRefFiles] = useState<string[]>([])
   const [showRefPicker, setShowRefPicker] = useState(false)
 
-  // Constantes para optimización de rendimiento
-  const MAX_VISIBLE_BASES = 500 // Máximo número de bases a renderizar a la vez
-  const CHUNK_SIZE = 100 // Tamaño de chunk para cálculos
-  const OVERVIEW_RESOLUTION = 1000 // Resolución del minimap para secuencias largas
-  
-  // Función optimizada para comparar las secuencias usando chunks
-  const compareSequencesOptimized = useCallback((seq1: string, seq2: string) => {
-    const maxLength = Math.max(seq1.length, seq2.length)
-    const result1: Array<{ char: string; isMatch: boolean; index: number }> = []
-    const result2: Array<{ char: string; isMatch: boolean; index: number }> = []
+  // Constantes optimizadas para 1000 fragmentos
+  const CHUNK_SIZE = 1000 // Bases por chunk visible (reducido)
+  const NAVIGATION_STEP = 500 // Paso de navegación
+  const TOTAL_FRAGMENTS = 1000 // Ahora usamos 1000 fragmentos
+
+  // Función para obtener el número de fragmento basado en posición
+  const getFragmentNumber = useCallback((position: number): number => {
+    if (totalLength === 0) return 1
+    const fragmentSize = Math.ceil(totalLength / TOTAL_FRAGMENTS)
+    return Math.min(Math.floor(position / fragmentSize) + 1, TOTAL_FRAGMENTS)
+  }, [totalLength])
+
+  // Calcular título dinámico de referencia basado en posición actual
+  const currentReferenceTitle = useMemo(() => {
+    const currentFragmentNumber = getFragmentNumber(viewStart)
+    const referenceFilename = `default_part_${currentFragmentNumber.toString().padStart(4, '0')}.fasta`
+    return `${title1.replace(/\s*\([^)]*\)/, '')} (${referenceFilename})`
+  }, [title1, viewStart, getFragmentNumber])
+
+  // Calcular título dinámico del paciente basado en posición actual
+  const currentPatientTitle = useMemo(() => {
+    const currentFragmentNumber = getFragmentNumber(viewStart)
+    const hasAligned = patientFiles.some(f => f.includes('aligned_part_'))
+    const prefix = hasAligned ? 'aligned_part_' : 'patient_part_'
+    const patientFilename = `${prefix}${currentFragmentNumber.toString().padStart(4, '0')}.fasta`
+    const baseTitle = title2.replace(/\s*\([^)]*\)/, '')
+    return `${baseTitle} (${patientFilename}) - Fragmento ${currentFragmentNumber}/1000`
+  }, [title2, viewStart, getFragmentNumber, patientFiles])
+
+  // Función para cargar fragmento de referencia específico
+  const loadReferenceFragment = useCallback(async (fragmentNumber: number): Promise<string> => {
+    const fragmentKey = `ref_${fragmentNumber}`
     
-    // Procesar en chunks para evitar bloquear el UI con secuencias muy largas
-    for (let chunkStart = 0; chunkStart < maxLength; chunkStart += CHUNK_SIZE) {
-      const chunkEnd = Math.min(chunkStart + CHUNK_SIZE, maxLength)
+    // Verificar cache primero
+    if (referenceFragmentCache[fragmentKey]) {
+      return referenceFragmentCache[fragmentKey]
+    }
+
+    try {
+      const filename = `default_part_${fragmentNumber.toString().padStart(4, '0')}.fasta`
+      const response = await axios.get(
+        `http://localhost:8000/split_fasta_files/${encodeURIComponent(filename)}`,
+        { responseType: 'text' }
+      )
       
-      for (let i = chunkStart; i < chunkEnd; i++) {
-        const char1 = seq1[i] || '-'
-        const char2 = seq2[i] || '-'
-        const isMatch = char1 === char2
-        
-        result1.push({ char: char1, isMatch, index: i })
-        result2.push({ char: char2, isMatch, index: i })
+      const fragmentData = extractSequenceFromFasta(response.data)
+      
+      // Guardar en cache
+      setReferenceFragmentCache(prev => ({
+        ...prev,
+        [fragmentKey]: fragmentData
+      }))
+      
+      return fragmentData
+    } catch (error) {
+      console.error(`Error loading reference fragment ${fragmentNumber}:`, error)
+      return ''
+    }
+  }, [referenceFragmentCache])
+
+  // Función para cargar fragmento del paciente específico
+  const loadPatientFragment = useCallback(async (fragmentNumber: number): Promise<string> => {
+    if (!patientDni || patientFiles.length === 0) return ''
+    
+    const fragmentKey = `patient_${fragmentNumber}`
+    
+    // Verificar cache primero
+    if (patientFragmentCache[fragmentKey]) {
+      return patientFragmentCache[fragmentKey]
+    }
+
+    try {
+      const headers = {
+        Authorization: `Bearer ${localStorage.getItem('token')}`
       }
+
+      // Determinar el tipo de archivo basado en patientFiles
+      let filename = ''
+      if (patientFiles.some(f => f.includes('aligned_part_'))) {
+        filename = `aligned_part_${fragmentNumber.toString().padStart(4, '0')}.fasta`
+      } else {
+        filename = `patient_part_${fragmentNumber.toString().padStart(4, '0')}.fasta`
+      }
+
+      const response = await axios.get(
+        `http://localhost:8000/pacientes/${patientDni}/files/${encodeURIComponent(filename)}`,
+        { headers, responseType: 'text' }
+      )
+      
+      const fragmentData = response.data.trim().toUpperCase()
+      
+      // Guardar en cache
+      setPatientFragmentCache(prev => ({
+        ...prev,
+        [fragmentKey]: fragmentData
+      }))
+      
+      return fragmentData
+    } catch (error) {
+      console.error(`Error loading patient fragment ${fragmentNumber}:`, error)
+      return ''
+    }
+  }, [patientDni, patientFiles, patientFragmentCache])
+
+  // Función optimizada para obtener chunk de referencia
+  const getReferenceChunk = useCallback(async (start: number, size: number): Promise<SequenceChunk> => {
+    const end = Math.min(start + size, totalLength)
+    
+    // Determinar qué fragmentos necesitamos
+    const startFragment = getFragmentNumber(start)
+    const endFragment = getFragmentNumber(end - 1)
+    
+    let combinedData = ''
+    const fragmentSize = Math.ceil(totalLength / TOTAL_FRAGMENTS)
+    
+    // Cargar solo los fragmentos necesarios
+    for (let fragNum = startFragment; fragNum <= endFragment; fragNum++) {
+      const fragmentData = await loadReferenceFragment(fragNum)
+      
+      // Calcular qué parte de este fragmento necesitamos
+      const fragStart = (fragNum - 1) * fragmentSize
+      
+      const chunkStartInFrag = Math.max(0, start - fragStart)
+      const chunkEndInFrag = Math.min(fragmentData.length, end - fragStart)
+      
+      if (chunkStartInFrag < chunkEndInFrag && fragmentData) {
+        combinedData += fragmentData.slice(chunkStartInFrag, chunkEndInFrag)
+      }
+    }
+
+    return {
+      data: combinedData,
+      startPosition: start,
+      endPosition: start + combinedData.length - 1
+    }
+  }, [totalLength, getFragmentNumber, loadReferenceFragment])
+
+  // Función optimizada para cargar chunk del paciente
+  const loadPatientChunk = useCallback(async (start: number, size: number): Promise<SequenceChunk> => {
+    if (!patientDni || patientFiles.length === 0) {
+      return {
+        data: '-'.repeat(size),
+        startPosition: start,
+        endPosition: start + size - 1
+      }
+    }
+
+    try {
+      setLoading(true)
+      
+      const end = Math.min(start + size, totalLength)
+      
+      // Determinar qué fragmentos necesitamos
+      const startFragment = getFragmentNumber(start)
+      const endFragment = getFragmentNumber(end - 1)
+      
+      let combinedData = ''
+      const fragmentSize = Math.ceil(totalLength / TOTAL_FRAGMENTS)
+      
+      // Cargar solo los fragmentos necesarios
+      for (let fragNum = startFragment; fragNum <= endFragment; fragNum++) {
+        const fragmentData = await loadPatientFragment(fragNum)
+        
+        if (fragmentData) {
+          // Calcular qué parte de este fragmento necesitamos
+          const fragStart = (fragNum - 1) * fragmentSize
+          
+          const chunkStartInFrag = Math.max(0, start - fragStart)
+          const chunkEndInFrag = Math.min(fragmentData.length, end - fragStart)
+          
+          if (chunkStartInFrag < chunkEndInFrag) {
+            combinedData += fragmentData.slice(chunkStartInFrag, chunkEndInFrag)
+          }
+        } else {
+          // Si no hay datos, llenar con '-'
+          const expectedSize = Math.min(fragmentSize, end - (fragNum - 1) * fragmentSize)
+          combinedData += '-'.repeat(expectedSize)
+        }
+      }
+
+      return {
+        data: combinedData,
+        startPosition: start,
+        endPosition: start + combinedData.length - 1
+      }
+    } catch (error) {
+      console.error('Error loading patient chunk:', error)
+      return {
+        data: '-'.repeat(size),
+        startPosition: start,
+        endPosition: start + size - 1
+      }
+    } finally {
+      setLoading(false)
+    }
+  }, [patientDni, patientFiles, totalLength, getFragmentNumber, loadPatientFragment])
+
+  // Función para cargar chunks actuales
+  const loadCurrentChunks = useCallback(async () => {
+    if (totalLength === 0) return
+
+    const refChunk = await getReferenceChunk(viewStart, CHUNK_SIZE)
+    setCurrentChunk(refChunk)
+
+    const patChunk = await loadPatientChunk(viewStart, CHUNK_SIZE)
+    setPatientChunk(patChunk)
+  }, [viewStart, totalLength, getReferenceChunk, loadPatientChunk])
+
+  // Efecto para cargar chunks cuando cambia la vista
+  useEffect(() => {
+    loadCurrentChunks()
+  }, [viewStart, totalLength]) // Usar dependencias específicas en lugar de la función
+
+  // Efecto para cargar automáticamente el archivo de referencia
+  useEffect(() => {
+    if (referenceFilename && !referenceSequence) {
+      const loadReferenceFile = async () => {
+        try {
+          const res = await axios.get<string>(
+            `http://localhost:8000/split_fasta_files/${encodeURIComponent(referenceFilename)}`,
+            { responseType: "text" }
+          );
+          const seq = extractSequenceFromFasta(res.data);
+          setReferenceSequence(seq);
+          console.log(`✅ Archivo de referencia ${referenceFilename} cargado automáticamente`);
+        } catch (err) {
+          console.error(`Error cargando archivo de referencia ${referenceFilename}:`, err);
+        }
+      };
+      
+      loadReferenceFile();
+    }
+  }, [referenceFilename]); // Removido referenceSequence de las dependencias para evitar bucle
+
+  // Efecto para auto-cargar en la posición de match cuando se cargan archivos del paciente
+  useEffect(() => {
+    if (patientFiles.length > 0 && totalLength > 0) {
+      let targetPosition = 0;
+      
+      // Usar información de BLAST si está disponible (más precisa)
+      if (blastNavigationInfo && hasAlignedSequences) {
+        targetPosition = blastNavigationInfo.match_start_position;
+        console.log(`🎯 Navegando usando BLAST: posición ${targetPosition} (chunk recomendado: ${blastNavigationInfo.recommended_chunk})`);
+      } 
+      // Fallback a autoLoadPosition si no hay info de BLAST
+      else if (autoLoadPosition > 0) {
+        targetPosition = autoLoadPosition;
+        console.log(`📍 Navegando usando autoLoadPosition: ${targetPosition}`);
+      }
+      
+      if (targetPosition > 0) {
+        const adjustedPosition = Math.max(0, Math.min(
+          targetPosition,
+          totalLength - CHUNK_SIZE
+        ));
+        setViewStart(adjustedPosition);
+      }
+    }
+  }, [patientFiles, autoLoadPosition, totalLength, blastNavigationInfo, hasAlignedSequences])
+
+  // Efecto inicial para establecer la longitud total
+  useEffect(() => {
+    if (totalSequenceLength && hasAlignedSequences) {
+      // Si tenemos la longitud exacta de chunks alineados, usarla
+      setTotalLength(totalSequenceLength)
+    } else if (referenceSequence) {
+      setTotalLength(referenceSequence.length)
+    } else if (patientChunkNumber) {
+      // Si se especifica un chunk específico, usar una longitud estimada para un fragmento
+      setTotalLength(referenceSequence.length || 250000) // longitud típica de un fragmento
+    } else if (patientFiles.length === TOTAL_FRAGMENTS) {
+      // Si hay exactamente 1000 archivos del paciente, usar la longitud de la secuencia de referencia
+      // o una longitud estimada basada en el tamaño típico de secuencias genómicas
+      setTotalLength(referenceSequence.length || 5000000) // usar referencia o 5M por defecto
+    } else if (patientFiles.length > 0) {
+      // Si hay archivos del paciente pero no 1000, estimar basándose en los disponibles
+      setTotalLength(referenceSequence.length || 1000000) // usar referencia o 1M por defecto
+    }
+  }, [referenceSequence, patientFiles, patientChunkNumber, totalSequenceLength, hasAlignedSequences])
+
+  // Función para comparar chunks
+  const compareChunks = useMemo(() => {
+    if (!currentChunk || !patientChunk) return { result1: [], result2: [] }
+
+    const maxLength = Math.max(currentChunk.data.length, patientChunk.data.length)
+    const result1: Array<{ char: string; isMatch: boolean; index: number; isPatientGap: boolean }> = []
+    const result2: Array<{ char: string; isMatch: boolean; index: number; isPatientGap: boolean }> = []
+    
+    for (let i = 0; i < maxLength; i++) {
+      const char1 = currentChunk.data[i] || '-'
+      const char2 = patientChunk.data[i] || '-'
+      const isMatch = char1 === char2
+      const isPatientGap = char2 === '-' // Nuevo: detectar cuando el paciente tiene gap
+      const globalIndex = currentChunk.startPosition + i
+        
+      result1.push({ char: char1, isMatch, index: globalIndex, isPatientGap })
+      result2.push({ char: char2, isMatch, index: globalIndex, isPatientGap })
     }
     
     return { result1, result2 }
-  }, [CHUNK_SIZE])
+  }, [currentChunk, patientChunk])
 
-  const { result1, result2 } = useMemo(() => 
-    compareSequencesOptimized(sequence1, sequence2), 
-    [sequence1, sequence2, compareSequencesOptimized]
-  )
-  
-  // Lógica de visualización optimizada para secuencias largas
-  const totalBases = result1.length
-  const isZoomedIn = zoomLevel > 1
-  const isLargeSequence = totalBases > 2000
-  
-  // Calcular qué mostrar basado en el zoom y tamaño de secuencia
-  const currentViewStart = (isZoomedIn || isLargeSequence) ? viewStart : 0
-  
-  let basesPerView: number
-  if (isZoomedIn) {
-    // Mejorar cálculo del zoom para permitir zoom hasta base individual
-    basesPerView = Math.max(1, Math.floor(100 / zoomLevel))
-  } else if (isLargeSequence) {
-    // Para secuencias largas, siempre usar ventana limitada
-    basesPerView = MAX_VISIBLE_BASES
-  } else {
-    basesPerView = totalBases
+  // Calcular estadísticas del chunk actual
+  const { result1, result2 } = compareChunks
+  const chunkMismatches = result1.filter(item => !item.isMatch).length
+  const chunkMatchPercentage = result1.length > 0 
+    ? ((result1.length - chunkMismatches) / result1.length * 100).toFixed(1)
+    : '0.0'
+
+  // Funciones de navegación
+  const moveLeft = () => {
+    setViewStart(prev => Math.max(0, prev - NAVIGATION_STEP))
   }
-  
-  const viewEnd = Math.min(currentViewStart + basesPerView, totalBases)
-  const displayResult1 = result1.slice(currentViewStart, viewEnd)
-  const displayResult2 = result2.slice(currentViewStart, viewEnd)
-  
-  // Calcular estadísticas
-  const mismatches = result1.filter(item => !item.isMatch).length
-  const matchPercentage = ((totalBases - mismatches) / totalBases * 100).toFixed(1)
 
-  // Manejadores para la selección
-  const handleMouseDown = useCallback((index: number) => {
-    setIsSelecting(true)
-    const globalIndex = (isZoomedIn || isLargeSequence) ? currentViewStart + index : index
-    setSelectionStart(globalIndex)
-    setSelection(null)
-  }, [currentViewStart, isZoomedIn, isLargeSequence])
+  const moveRight = () => {
+    setViewStart(prev => Math.min(totalLength - CHUNK_SIZE, prev + NAVIGATION_STEP))
+  }
 
-  const handleMouseMove = useCallback((index: number) => {
-    if (isSelecting) {
-      const globalIndex = (isZoomedIn || isLargeSequence) ? currentViewStart + index : index
-      const start = Math.min(selectionStart, globalIndex)
-      const end = Math.max(selectionStart, globalIndex)
-      setSelection({ start, end })
-    }
-  }, [isSelecting, selectionStart, currentViewStart, isZoomedIn, isLargeSequence])
-
-  const handleMouseUp = useCallback(() => {
-    setIsSelecting(false)
-  }, [])
-
-  // Funciones de zoom y navegación mejoradas
-  const zoomIn = () => {
-    const newZoomLevel = Math.min(zoomLevel + 1, 20) // Permitir más zoom
-    
-    if (zoomLevel === 1 || (!isZoomedIn && isLargeSequence)) {
-      // Primera vez que hace zoom, centrarse en el medio o en la selección
-      if (selection) {
-        const selectionCenter = Math.floor((selection.start + selection.end) / 2)
-        const newBasesPerView = Math.floor(50 / newZoomLevel) + 10
-        setViewStart(Math.max(0, selectionCenter - Math.floor(newBasesPerView / 2)))
-      } else {
-        const newBasesPerView = Math.floor(50 / newZoomLevel) + 10
-        setViewStart(Math.max(0, Math.floor(totalBases / 2) - Math.floor(newBasesPerView / 2)))
+  const jumpToPosition = () => {
+    const input = prompt(`Ir a posición (1 - ${totalLength}):`)
+    if (input) {
+      const position = parseInt(input) - 1
+      if (position >= 0 && position < totalLength) {
+        setViewStart(Math.max(0, Math.min(position, totalLength - CHUNK_SIZE)))
       }
     }
-    setZoomLevel(newZoomLevel)
   }
 
-  const zoomOut = () => {
-    if (zoomLevel <= 2) {
-      setZoomLevel(1)
-      setViewStart(0)
-    } else {
-      setZoomLevel(prev => Math.max(prev - 1, 1))
-    }
-  }
-
+  // Funciones para archivos de referencia
   const loadRefFiles = useCallback(async () => {
     try {
       const res = await axios.get<{ files: string[] }>(
@@ -151,7 +407,7 @@ const DNAViewer: React.FC<DNAViewerProps> = ({
       setRefFiles(res.data.files || []);
     } catch (err) {
       console.error("Error listando archivos de referencia:", err);
-      setRefFiles([]);       // asegúrate de limpiar en caso de error
+      setRefFiles([]);
     }
   }, []);
 
@@ -163,16 +419,35 @@ const DNAViewer: React.FC<DNAViewerProps> = ({
   const handleReferenceSelect = useCallback(
     async (key: string) => {
       try {
-        // extraemos solo el nombre de archivo
         const filename = key.replace("split_fasta_files/", "");
-        // lo traemos de tu endpoint FastAPI
+        
+        // Extraer el número del fragmento del nombre del archivo
+        const fragmentMatch = filename.match(/default_part_(\d+)\.fasta/);
+        const fragmentNumber = fragmentMatch ? parseInt(fragmentMatch[1]) : 1;
+        
         const res = await axios.get<string>(
           `http://localhost:8000/split_fasta_files/${encodeURIComponent(filename)}`,
           { responseType: "text" }
         );
-        // limpiamos la cadena y la guardamos como nueva referencia
         const seq = extractSequenceFromFasta(res.data);
-        setSequence1(seq);
+        setReferenceSequence(seq);
+        
+        // Navegar al fragmento seleccionado en lugar de resetear a 0
+        if (totalLength > 0 && fragmentNumber > 1) {
+          const fragmentSize = Math.ceil(totalLength / TOTAL_FRAGMENTS);
+          const targetPosition = (fragmentNumber - 1) * fragmentSize;
+          const adjustedPosition = Math.max(0, Math.min(
+            targetPosition,
+            totalLength - CHUNK_SIZE
+          ));
+          setViewStart(adjustedPosition);
+          console.log(`🎯 Navegando al fragmento ${fragmentNumber} (posición ${targetPosition})`);
+        } else {
+          setViewStart(0); // Solo resetear si es el fragmento 1 o no hay totalLength
+        }
+        
+        // Limpiar cache cuando se cambia de referencia
+        setReferenceFragmentCache({});
       } catch (err) {
         console.error("Error cargando referencia:", err);
         alert("No se pudo cargar el archivo de referencia.");
@@ -180,224 +455,48 @@ const DNAViewer: React.FC<DNAViewerProps> = ({
         setShowRefPicker(false);
       }
     },
-    []
+    [totalLength]
   );
-
-  const zoomToSelection = () => {
-    if (selection) {
-      const selectionLength = selection.end - selection.start + 1
-      // Calcular zoom para mostrar la selección con un poco de contexto
-      const targetBasesVisible = Math.max(selectionLength * 2, 10) // Al menos 10 bases visibles
-      const newZoomLevel = Math.max(2, Math.min(Math.floor(100 / targetBasesVisible), 20))
-      
-      setZoomLevel(newZoomLevel)
-      
-      // Centrar la vista en la selección
-      const selectionCenter = Math.floor((selection.start + selection.end) / 2)
-      const newBasesPerView = Math.max(1, Math.floor(100 / newZoomLevel))
-      const newViewStart = Math.max(0, Math.min(
-        selectionCenter - Math.floor(newBasesPerView / 2),
-        totalBases - newBasesPerView
-      ))
-      
-      setViewStart(newViewStart)
-      setSelection(null)
-    }
-  }
-
-  const resetView = () => {
-    setZoomLevel(1)
-    setViewStart(0)
-    setSelection(null)
-  }
-
-  const moveLeft = () => {
-    if (isZoomedIn || isLargeSequence) {
-      setViewStart(prev => Math.max(0, prev - Math.floor(basesPerView / 4)))
-    }
-  }
-
-  const moveRight = () => {
-    if (isZoomedIn || isLargeSequence) {
-      setViewStart(prev => Math.min(totalBases - basesPerView, prev + Math.floor(basesPerView / 4)))
-    }
-  }
 
   // Función para navegar al hacer click en el minimap
   const handleMinimapClick = (event: React.MouseEvent<HTMLDivElement>) => {
     const rect = event.currentTarget.getBoundingClientRect()
     const clickX = event.clientX - rect.left
     const clickPercentage = clickX / rect.width
-    const targetPosition = Math.floor(clickPercentage * totalBases)
+    const targetPosition = Math.floor(clickPercentage * totalLength)
     
-    // Centrar la vista en la posición clickeada
     const newViewStart = Math.max(0, Math.min(
-      targetPosition - Math.floor(basesPerView / 2),
-      totalBases - basesPerView
+      targetPosition - Math.floor(CHUNK_SIZE / 2),
+      totalLength - CHUNK_SIZE
     ))
     
     setViewStart(newViewStart)
   }
 
-  // Función para determinar si una base está en la selección
-  const isInSelection = (globalIndex: number) => {
-    return selection && globalIndex >= selection.start && globalIndex <= selection.end
-  }
-
-  // Calcular el tamaño de base dinámicamente
-  const getBaseSize = () => {
-    if (isZoomedIn) {
-      // Escala logarítmica para zoom extremo
-      const scaleFactor = Math.min(0.5 + (zoomLevel * 0.3), 4.0)
-      return scaleFactor
-    } else if (isLargeSequence) {
-      // Para secuencias largas, usar tamaño fijo optimizado
-      return 0.75
-    } else {
-      // En vista completa para secuencias pequeñas, ajustar tamaño según longitud
-      const containerWidth = 800 // Ancho aproximado del contenedor
-      const maxBaseWidth = containerWidth / totalBases
-      return Math.max(0.4, Math.min(maxBaseWidth * 20, 1)) // Entre 0.4 y 1 rem
-    }
-  }
-
-  // Generar datos del minimap optimizado para secuencias largas
-  const getOverviewData = useMemo(() => {
-    if (totalBases <= OVERVIEW_RESOLUTION) {
-      return result1.map((item, index) => ({ isMatch: item.isMatch, index }))
-    }
-    
-    // Para secuencias muy largas, samplear para el minimap
-    const step = Math.ceil(totalBases / OVERVIEW_RESOLUTION)
-    const overview = []
-    for (let i = 0; i < totalBases; i += step) {
-      const chunk = result1.slice(i, i + step)
-      const hasMatches = chunk.some(item => item.isMatch)
-      overview.push({ isMatch: hasMatches, index: i })
-    }
-    return overview
-  }, [result1, totalBases, OVERVIEW_RESOLUTION])
-
-
-
-  // Función para analizar diferencias entre secuencias actuales
-  const analyzeDifferences = useCallback(() => {
-    const differences: Array<{ position: number; ref: string; patient: string; type: 'substitution' | 'deletion' | 'insertion' }> = []
-    
-    const maxLength = Math.max(sequence1.length, sequence2.length)
-    
-    for (let i = 0; i < maxLength; i++) {
-      const refBase = sequence1[i] || '-'
-      const patientBase = sequence2[i] || '-'
-      
-      if (refBase !== patientBase) {
-        let type: 'substitution' | 'deletion' | 'insertion' = 'substitution'
-        
-        if (refBase === '-') {
-          type = 'insertion'
-        } else if (patientBase === '-') {
-          type = 'deletion'
-        }
-        
-        differences.push({
-          position: i + 1,
-          ref: refBase,
-          patient: patientBase,
-          type
-        })
-      }
-    }
-    
-    return differences
-  }, [sequence1, sequence2])
-
-  // Función para generar archivo FASTA
-  const generateFastaFile = useCallback(() => {
-    const differences = analyzeDifferences()
-    
-    // Agrupar diferencias por tipo
-    const substitutions = differences.filter(d => d.type === 'substitution')
-    const deletions = differences.filter(d => d.type === 'deletion')
-    const insertions = differences.filter(d => d.type === 'insertion')
-    
-    // Generar contenido FASTA
-    let fastaContent = ''
-    
-    // Encabezado para secuencia de referencia
-    fastaContent += `>${title1.replace(/\s+/g, '_')}|Length=${sequence1.length}\n`
-    fastaContent += formatSequenceForFasta(sequence1) + '\n\n'
-    
-    // Encabezado para secuencia del paciente con información de diferencias
-    fastaContent += `>${title2.replace(/\s+/g, '_')}|Length=${sequence2.length}|Substitutions=${substitutions.length}|Deletions=${deletions.length}|Insertions=${insertions.length}\n`
-    
-    // Agregar información detallada de diferencias
-    if (substitutions.length > 0) {
-      fastaContent += `# Sustituciones (${substitutions.length}): `
-      fastaContent += substitutions.slice(0, 10).map(d => `${d.position}:${d.ref}>${d.patient}`).join(', ')
-      if (substitutions.length > 10) fastaContent += '...'
-      fastaContent += '\n'
-    }
-    
-    if (deletions.length > 0) {
-      fastaContent += `# Deleciones (${deletions.length}): `
-      fastaContent += deletions.slice(0, 10).map(d => `${d.position}:${d.ref}>-`).join(', ')
-      if (deletions.length > 10) fastaContent += '...'
-      fastaContent += '\n'
-    }
-    
-    if (insertions.length > 0) {
-      fastaContent += `# Inserciones (${insertions.length}): `
-      fastaContent += insertions.slice(0, 10).map(d => `${d.position}:->${d.patient}`).join(', ')
-      if (insertions.length > 10) fastaContent += '...'
-      fastaContent += '\n'
-    }
-    
-    fastaContent += formatSequenceForFasta(sequence2) + '\n'
-    
-    return fastaContent
-  }, [sequence1, sequence2, title1, title2, analyzeDifferences])
-
-  // Función para formatear secuencia en líneas de 80 caracteres (estándar FASTA)
-  const formatSequenceForFasta = (sequence: string): string => {
-    const lineLength = 80
-    let formatted = ''
-    for (let i = 0; i < sequence.length; i += lineLength) {
-      formatted += sequence.substring(i, i + lineLength) + '\n'
-    }
-    return formatted.trim()
-  }
-
-  // Función para descargar archivo FASTA
+  // Función para exportar FASTA (simplificada)
   const downloadFastaFile = useCallback(() => {
-    const fastaContent = generateFastaFile()
+    if (!currentChunk || !patientChunk) return
+
+    let fastaContent = ''
+    fastaContent += `>${title1.replace(/\s+/g, '_')}|Chunk_${currentChunk.startPosition + 1}-${currentChunk.endPosition + 1}\n`
+    fastaContent += currentChunk.data + '\n\n'
+    fastaContent += `>${title2.replace(/\s+/g, '_')}|Chunk_${patientChunk.startPosition + 1}-${patientChunk.endPosition + 1}\n`
+    fastaContent += patientChunk.data + '\n'
+
     const blob = new Blob([fastaContent], { type: 'text/plain' })
     const url = URL.createObjectURL(blob)
     
     const link = document.createElement('a')
     link.href = url
-    link.download = `secuencias_comparacion_${new Date().toISOString().split('T')[0]}.fasta`
+    link.download = `chunk_${currentChunk.startPosition + 1}-${currentChunk.endPosition + 1}_${new Date().toISOString().split('T')[0]}.fasta`
     document.body.appendChild(link)
     link.click()
     document.body.removeChild(link)
     URL.revokeObjectURL(url)
-  }, [generateFastaFile])
+  }, [currentChunk, patientChunk, title1, title2])
 
-  const baseSize = getBaseSize()
-
-  // Efecto para manejar eventos globales del mouse
-  useEffect(() => {
-    const handleGlobalMouseUp = () => {
-      setIsSelecting(false)
-    }
-
-    if (isSelecting) {
-      document.addEventListener('mouseup', handleGlobalMouseUp)
-      return () => document.removeEventListener('mouseup', handleGlobalMouseUp)
-    }
-  }, [isSelecting])
-
-  // Validación de secuencias vacías
-  if (totalBases === 0) {
+  // Validación
+  if (totalLength === 0) {
     return (
       <div className="dna-viewer">
         <div className="dna-viewer-header">
@@ -415,94 +514,56 @@ const DNAViewer: React.FC<DNAViewerProps> = ({
       <div className="dna-viewer-header">
         <h3>Visualizador de Secuencias de ADN</h3>
         <div className="dna-stats">
-          <span className="stat">Total: {totalBases} bases</span>
-          <span className="stat">Coincidencias: {matchPercentage}%</span>
-          <span className="stat mismatches">Diferencias: {mismatches}</span>
-          <span className="stat">Zoom: {zoomLevel === 1 ? 'Completo' : `${zoomLevel}x`}</span>
+          <span className="stat">Total: {totalLength.toLocaleString()} bases</span>
+          <span className="stat">Chunk: {chunkMatchPercentage}% coincidencias</span>
+          <span className="stat mismatches">Diferencias: {chunkMismatches}</span>
+          <span className="stat">Cache: R{Object.keys(referenceFragmentCache).length}/P{Object.keys(patientFragmentCache).length}</span>
+          {loading && <span className="stat loading">Cargando...</span>}
         </div>
       </div>
 
       {/* Controles de navegación */}
       <div className="dna-controls">
+        <div className="nav-controls">
+          <button onClick={moveLeft} className="control-btn" disabled={viewStart <= 0}>◀</button>
+          <span className="position-info">
+            Posición: {(viewStart + 1).toLocaleString()} - {Math.min(viewStart + CHUNK_SIZE, totalLength).toLocaleString()} de {totalLength.toLocaleString()} | Fragmento: {getFragmentNumber(viewStart)}/1000
+          </span>
+          <button onClick={moveRight} className="control-btn" disabled={viewStart + CHUNK_SIZE >= totalLength}>▶</button>
+          <button onClick={jumpToPosition} className="control-btn">Ir a posición</button>
+        </div>
         <div className="zoom-controls">
-          <button onClick={zoomIn} className="control-btn" disabled={zoomLevel >= 20}>🔍+</button>
-          <button onClick={zoomOut} className="control-btn" disabled={zoomLevel <= 1}>🔍-</button>
-          <button onClick={resetView} className="control-btn">⌂</button>
-          {selection && (
-            <button onClick={zoomToSelection} className="control-btn zoom-selection">
-              Zoom a selección
-            </button>
-          )}
           {allowExport && (
-            <button onClick={downloadFastaFile} className="control-btn fasta-export" title="Exportar como archivo FASTA">
-              📄 FASTA
+            <button onClick={downloadFastaFile} className="control-btn fasta-export" title="Exportar chunk actual como FASTA" disabled={!currentChunk}>
+              📄 Exportar Chunk
             </button>
           )}
         </div>
-        {(isZoomedIn || isLargeSequence) && (
-          <div className="nav-controls">
-            <button onClick={moveLeft} className="control-btn" disabled={currentViewStart <= 0}>◀</button>
-            <span className="position-info">
-              Posición: {currentViewStart + 1} - {viewEnd} de {totalBases}
-              {isLargeSequence && !isZoomedIn && (
-                <span style={{ fontSize: '0.75rem', color: '#6c757d', marginLeft: '0.5rem' }}>
-                  (Vista optimizada)
-                </span>
-              )}
-            </span>
-            <button onClick={moveRight} className="control-btn" disabled={viewEnd >= totalBases}>▶</button>
-          </div>
-        )}
       </div>
 
-      {/* Minimap/Overview - mostrar para secuencias largas o cuando está en zoom */}
-      {(isZoomedIn || isLargeSequence) && (
+      {/* Minimap/Overview */}
         <div className="sequence-overview">
           <div className="overview-track" onClick={handleMinimapClick} style={{ cursor: 'pointer' }}>
-            {/* Renderizar minimap optimizado para secuencias largas */}
-            {isLargeSequence && getOverviewData.map((point, index) => (
-              <div
-                key={index}
-                className={`overview-base ${point.isMatch ? 'match' : 'mismatch'}`}
-                style={{
-                  left: `${(point.index / totalBases) * 100}%`,
-                  width: `${100 / getOverviewData.length}%`
-                }}
-              />
-            ))}
-            
             {/* Viewport indicator */}
             <div 
               className="overview-viewport"
               style={{
-                left: `${(currentViewStart / totalBases) * 100}%`,
-                width: `${(basesPerView / totalBases) * 100}%`
-              }}
-            />
-            
-            {/* Selection indicator */}
-            {selection && (
-              <div 
-                className="overview-selection"
-                style={{
-                  left: `${(selection.start / totalBases) * 100}%`,
-                  width: `${((selection.end - selection.start + 1) / totalBases) * 100}%`
+              left: `${(viewStart / totalLength) * 100}%`,
+              width: `${(CHUNK_SIZE / totalLength) * 100}%`
                 }}
               />
-            )}
           </div>
           <div className="minimap-instructions">
             <span style={{ fontSize: '0.75rem', color: '#6c757d' }}>
-              💡 Haz click en la barra para navegar rápidamente
+            💡 Haz click en la barra para navegar rápidamente por la secuencia completa (1000 fragmentos)
             </span>
           </div>
         </div>
-      )}
 
-      <div className={`dna-sequences ${isZoomedIn ? 'zoomed' : 'full-view'}`} ref={sequenceRef}>
+      <div className="dna-sequences full-view" ref={sequenceRef}>
         <div className="sequence-row">
           <div className="sequence-label" style={{ display: 'flex', flexDirection: 'column' }}>
-            {title1}:
+            {currentReferenceTitle}:
             <button
               className="control-btn"
               style={{ marginTop: '0.25rem', alignSelf: 'flex-start' }}
@@ -513,48 +574,57 @@ const DNAViewer: React.FC<DNAViewerProps> = ({
           </div>
           
           <div className="sequence-display">
-            {displayResult1.map((item, index) => (
-              <span
-                key={`seq1-${index}`}
-                className={`base ${item.char === '-' ? 'deletion' : (!item.isMatch ? 'mismatch' : 'match')}`}
-                title={`Posición ${item.index + 1}: ${item.char === '-' ? 'Deleción' : item.char}`}
-                onMouseDown={() => handleMouseDown(index)}
-                onMouseMove={() => handleMouseMove(index)}
-                onMouseUp={handleMouseUp}
-                style={{
-                  fontSize: `${baseSize}rem`,
-                  padding: `${baseSize * 0.1}rem ${baseSize * 0.2}rem`,
-                  margin: `${baseSize * 0.05}rem`
-                }}
-              >
-                {item.char === '-' ? '-' : item.char}
-              </span>
-            ))}
+            {result1.map((item, index) => {
+              // Si el paciente tiene gap en esta posición, mostrar referencia en gris
+              const getClassForReference = () => {
+                if (item.isPatientGap) return 'patient-gap'
+                if (item.char === '-') return 'deletion'
+                if (!item.isMatch) return 'mismatch'
+                return 'match'
+              }
+              
+              return (
+                <span
+                  key={`seq1-${index}`}
+                  className={`base ${getClassForReference()}`}
+                  title={`Posición ${item.index + 1}: ${item.char === '-' ? 'Deleción' : item.char}${item.isPatientGap ? ' (Gap en paciente)' : ''}`}
+                  style={{
+                    fontSize: '0.75rem',
+                    padding: '0.1rem 0.15rem',
+                    margin: '0.05rem'
+                  }}
+                >
+                  {item.char === '-' ? '-' : item.char}
+                </span>
+              )
+            })}
           </div>
         </div>
 
         <div className="sequence-row">
-          <div className="sequence-label">{title2}:</div>
+          <div className="sequence-label">{currentPatientTitle}:</div>
           <div className="sequence-display">
-            {displayResult2.map((item, index) => {
-              const isDeletion = item.char === '-'
-              const baseClass = isDeletion ? 'deletion' : (!item.isMatch ? 'mismatch' : 'match')
+            {result2.map((item, index) => {
+              // Si el paciente tiene gap, mostrar en gris
+              const getClassForPatient = () => {
+                if (item.isPatientGap) return 'patient-gap'
+                if (item.char === '-') return 'deletion'
+                if (!item.isMatch) return 'mismatch'
+                return 'match'
+              }
               
               return (
                 <span
                   key={`seq2-${index}`}
-                  className={`base ${baseClass} ${isInSelection(item.index) ? 'selected' : ''}`}
-                  title={`Posición ${item.index + 1}: ${isDeletion ? 'Deleción' : item.char}`}
-                  onMouseDown={() => handleMouseDown(index)}
-                  onMouseMove={() => handleMouseMove(index)}
-                  onMouseUp={handleMouseUp}
+                  className={`base ${getClassForPatient()}`}
+                  title={`Posición ${item.index + 1}: ${item.char === '-' ? 'Gap del paciente' : item.char}`}
                   style={{ 
-                    fontSize: `${baseSize}rem`,
-                    padding: `${baseSize * 0.1}rem ${baseSize * 0.2}rem`,
-                    margin: `${baseSize * 0.05}rem`
+                    fontSize: '0.75rem',
+                    padding: '0.1rem 0.15rem',
+                    margin: '0.05rem'
                   }}
                 >
-                  {isDeletion ? '-' : item.char}
+                  {item.char === '-' ? '-' : item.char}
                 </span>
               )
             })}
@@ -562,16 +632,9 @@ const DNAViewer: React.FC<DNAViewerProps> = ({
         </div>
       </div>
 
-      {selection && (
-        <div className="selection-info">
-          <p>Selección: posición {selection.start + 1} - {selection.end + 1} ({selection.end - selection.start + 1} bases)</p>
-        </div>
-      )}
-
       {showRefPicker && (
         <div className="modal-overlay">
           <div className="modal-content ref-picker-modal">
-            {/* Header */}
             <div className="modal-header">
               <h4>Archivos de Referencia</h4>
               <button
@@ -582,7 +645,6 @@ const DNAViewer: React.FC<DNAViewerProps> = ({
               </button>
             </div>
 
-            {/* Body */}
             <div className="modal-body">
               {refFiles.length === 0 ? (
                 <p className="empty-text">No se encontraron archivos.</p>
@@ -601,7 +663,6 @@ const DNAViewer: React.FC<DNAViewerProps> = ({
               )}
             </div>
 
-            {/* Footer */}
             <div className="modal-footer">
               <button
                 className="control-btn"
@@ -613,6 +674,7 @@ const DNAViewer: React.FC<DNAViewerProps> = ({
           </div>
         </div>
       )}
+
       <div className="dna-legend">
         <div className="legend-item">
           <span className="legend-color match"></span>
@@ -623,23 +685,16 @@ const DNAViewer: React.FC<DNAViewerProps> = ({
           <span>Diferencia</span>
         </div>
         <div className="legend-item">
-          <span className="legend-color selected"></span>
-          <span>Selección</span>
+          <span className="legend-color patient-gap"></span>
+          <span>Gap del paciente</span>
         </div>
         <div className="legend-instructions">
           <p><strong>Instrucciones:</strong> 
-            {isZoomedIn 
-              ? "Usa ◀▶ para navegar • Arrastra para seleccionar • 🔍- para alejar"
-              : isLargeSequence
-                ? "Usa ◀▶ para navegar por la secuencia • 🔍+ para hacer zoom • Arrastra para seleccionar"
-                : "🔍+ para hacer zoom • Arrastra para seleccionar una región"
-            }
+            Usa ◀▶ para navegar • "Ir a posición" para saltar • Click en barra superior para navegación rápida
           </p>
-          {isLargeSequence && (
             <p style={{ fontSize: '0.75rem', color: '#6c757d', marginTop: '0.25rem' }}>
-              ⚡ Secuencia larga detectada: usando visualización optimizada para mejor rendimiento
+            ⚡ Mostrando {CHUNK_SIZE.toLocaleString()} bases de {totalLength.toLocaleString()} • Carga optimizada por fragmentos (1000 total)
             </p>
-          )}
         </div>
       </div>
     </div>

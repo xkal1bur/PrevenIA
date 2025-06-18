@@ -1,3 +1,10 @@
 analysis1
 analysis2
 analysis3
+
+*.csv
+*.fasta
+*.pt
+*.txt
+
+test_alignment

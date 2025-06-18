@@ -5,6 +5,7 @@ export interface Prediction {
   probability: number
   confidence: string
   description: string
+  model_performance?: string
 }
 
 export interface PatientInfo {
@@ -12,12 +13,31 @@ export interface PatientInfo {
   name: string
 }
 
+export interface ScenarioInfo {
+  scenario_name: string
+  risk_level: string
+  clinical_significance: string
+  consensus: string
+  consensus_confidence: string
+}
+
+export interface AnalysisSummary {
+  models_predicting_lof: number
+  models_predicting_func: number
+  average_probability: number
+  prediction_agreement: string
+}
+
 export interface PredictionsResponse {
   status: string
   total_models: number
   patient_info: PatientInfo
   sample_used: string
+  scenario_info?: ScenarioInfo
+  analysis_summary?: AnalysisSummary
+  clinical_recommendations?: string[]
   predictions: Record<string, Prediction>
+  interpretation?: string
   description: string
 }
 

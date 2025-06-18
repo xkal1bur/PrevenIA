@@ -11,61 +11,88 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-AWS_REGION = os.getenv("AWS_REGION")
-SECRET_ARN = os.getenv("AURORA_SECRET_ARN")
-
-if not AWS_REGION or not SECRET_ARN:
-    raise RuntimeError("Faltan AWS_REGION o AURORA_SECRET_ARN en variables de entorno.")
-
-def get_secret_dict():
-    session = boto3.session.Session(region_name=AWS_REGION)
-    client = session.client("secretsmanager")
+def try_aurora_connection():
+    """Intenta conectar con Aurora usando AWS Secrets Manager"""
     try:
+        AWS_REGION = os.getenv("AWS_REGION")
+        SECRET_ARN = os.getenv("AURORA_SECRET_ARN")
+
+        if not AWS_REGION or not SECRET_ARN:
+            print("🔍 Variables de Aurora no encontradas, usando base de datos local...")
+            return None
+
+        print("🔍 Intentando conexión con Aurora...")
+        
+        session = boto3.session.Session(region_name=AWS_REGION)
+        client = session.client("secretsmanager")
+        
         resp = client.get_secret_value(SecretId=SECRET_ARN)
-    except ClientError as e:
-        raise RuntimeError(f"Error al obtener el secret de Secrets Manager: {e}")
-
-    if "SecretString" in resp:
-        secret_str = resp["SecretString"]
-        try:
+        
+        if "SecretString" in resp:
+            secret_str = resp["SecretString"]
             secret_dict = json.loads(secret_str)
-            return secret_dict
-        except json.JSONDecodeError:
-            raise RuntimeError("El formato del SecretString no es JSON válido.")
-    else:
-        secret_bytes = resp["SecretBinary"]
-        secret_dict = json.loads(secret_bytes.decode("utf-8"))
-        return secret_dict
+        else:
+            secret_bytes = resp["SecretBinary"]
+            secret_dict = json.loads(secret_bytes.decode("utf-8"))
 
-# Obtenemos el diccionario con las credenciales
-_secret = get_secret_dict()
+        # Extraer credenciales
+        username = secret_dict.get("username")
+        password = secret_dict.get("password")
+        dbname = secret_dict.get("dbname")
+        host = secret_dict.get("host") or os.getenv("AURORA_HOST")
+        port = secret_dict.get("port") or os.getenv("AURORA_PORT", "5432")
 
-# Extraemos cada campo
-username = _secret.get("username")
-password = _secret.get("password")
-dbname   = _secret.get("dbname")
-host     = _secret.get("host") or os.getenv("AURORA_HOST")
-port     = _secret.get("port") or os.getenv("AURORA_PORT", "5432")
+        if not all([username, password, dbname, host, port]):
+            print("⚠️ Credenciales de Aurora incompletas, usando base de datos local...")
+            return None
 
-# Aquí imprimimos cada uno en consola
-# print("=== Credenciales Aurora extraídas ===")
-# print("username:", username)
-# print("password:", password)
-# print("dbname:  ", dbname)
-# print("host:    ", host)
-# print("port:    ", port)
-# print("=====================================")
+        database_url = f"postgresql://{username}:{password}@{host}:{port}/{dbname}"
+        print("✅ Conexión con Aurora configurada correctamente")
+        return database_url
 
-if not all([username, password, dbname, host, port]):
-    raise RuntimeError("Faltan campos obligatorios en el secret de Aurora (username/password/dbname/host/port).")
+    except ClientError as e:
+        print(f"⚠️ Error al conectar con Aurora: {e}")
+        print("🔄 Fallback a base de datos local...")
+        return None
+    except Exception as e:
+        print(f"⚠️ Error inesperado con Aurora: {e}")
+        print("🔄 Fallback a base de datos local...")
+        return None
 
-DATABASE_URL = f"postgresql://{username}:{password}@{host}:{port}/{dbname}"
+def get_database_url():
+    """Obtiene la URL de la base de datos, intentando Aurora primero y luego local"""
+    
+    # Intentar Aurora primero
+    aurora_url = try_aurora_connection()
+    if aurora_url:
+        return aurora_url
+    
+    # Fallback a base de datos local
+    local_url = os.getenv("DATABASE_URL_LOCAL")
+    if local_url:
+        print("✅ Usando base de datos local desde DATABASE_URL_LOCAL")
+        return local_url
+    
+    # Fallback final a SQLite local si no hay DATABASE_URL_LOCAL
+    print("⚠️ DATABASE_URL_LOCAL no encontrada, usando SQLite local...")
+    return "sqlite:///./local_database.db"
 
-engine = create_engine(DATABASE_URL)
+# Obtener la URL de la base de datos
+DATABASE_URL = get_database_url()
+
+print(f"🗃️ Base de datos configurada: {DATABASE_URL.split('@')[0]}@[HOST_OCULTO]" if '@' in DATABASE_URL else f"🗃️ Base de datos configurada: {DATABASE_URL}")
+
+# Crear engine con configuración apropiada
+if DATABASE_URL.startswith("sqlite"):
+    engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
+else:
+    engine = create_engine(DATABASE_URL)
+
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
 def get_db():
+    """Generador para obtener sesiones de base de datos"""
     db = SessionLocal()
     try:
         yield db

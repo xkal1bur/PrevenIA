@@ -119,9 +119,13 @@
 
 .predictions-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  grid-template-columns: repeat(3, 1fr);
+  grid-template-rows: repeat(2, 1fr);
   gap: 1.5rem;
   margin-bottom: 2rem;
+  max-width: 1200px;
+  margin-left: auto;
+  margin-right: auto;
 }
 
 .prediction-card {
@@ -218,17 +222,25 @@
 }
 
 /* Responsive design */
+@media (max-width: 1024px) {
+  .predictions-grid {
+    grid-template-columns: repeat(2, 1fr);
+    grid-template-rows: repeat(3, 1fr);
+  }
+}
+
 @media (max-width: 768px) {
   .predictions-panel {
     padding: 1rem;
   }
-  
+
   .predictions-header h2 {
     font-size: 1.5rem;
   }
-  
+
   .predictions-grid {
     grid-template-columns: 1fr;
+    grid-template-rows: auto;
   }
   
   .predictions-info {
@@ -245,5 +257,167 @@
   
   .prediction-badge {
     align-self: flex-end;
+  }
+}
+
+/* Información del escenario clínico */
+.scenario-info {
+  background: #f0f9ff;
+  border: 1px solid #bae6fd;
+  border-radius: 8px;
+  padding: 1.5rem;
+  margin-bottom: 1.5rem;
+}
+
+.scenario-info h4 {
+  color: #0c4a6e;
+  margin: 0 0 1rem 0;
+  font-size: 1.2rem;
+  text-align: center;
+}
+
+.scenario-details {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 1rem;
+}
+
+.scenario-item {
+  display: flex;
+  flex-direction: column;
+  text-align: center;
+}
+
+.scenario-label {
+  font-size: 0.875rem;
+  color: #64748b;
+  margin-bottom: 0.25rem;
+  font-weight: 500;
+}
+
+.scenario-value {
+  font-size: 1rem;
+  color: #1e293b;
+  font-weight: 600;
+}
+
+/* Resumen del análisis */
+.analysis-summary {
+  background: #fefce8;
+  border: 1px solid #fef3c7;
+  border-radius: 8px;
+  padding: 1.5rem;
+  margin-bottom: 1.5rem;
+}
+
+.analysis-summary h4 {
+  color: #92400e;
+  margin: 0 0 1rem 0;
+  font-size: 1.1rem;
+  text-align: center;
+}
+
+.summary-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 1rem;
+}
+
+.summary-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.5rem;
+  background: rgba(255, 255, 255, 0.7);
+  border-radius: 6px;
+}
+
+.summary-label {
+  font-size: 0.875rem;
+  color: #78716c;
+  font-weight: 500;
+}
+
+.summary-value {
+  font-size: 1rem;
+  color: #1c1917;
+  font-weight: 600;
+}
+
+/* Interpretación clínica */
+.clinical-interpretation {
+  background: #f0fdf4;
+  border: 1px solid #dcfce7;
+  border-radius: 8px;
+  padding: 1.5rem;
+  margin-bottom: 1.5rem;
+}
+
+.clinical-interpretation h4 {
+  color: #166534;
+  margin: 0 0 1rem 0;
+  font-size: 1.1rem;
+}
+
+.clinical-interpretation p {
+  color: #374151;
+  line-height: 1.6;
+  margin: 0;
+}
+
+/* Recomendaciones clínicas */
+.clinical-recommendations {
+  background: #fdf2f8;
+  border: 1px solid #fce7f3;
+  border-radius: 8px;
+  padding: 1.5rem;
+  margin-bottom: 1.5rem;
+}
+
+.clinical-recommendations h4 {
+  color: #be185d;
+  margin: 0 0 1rem 0;
+  font-size: 1.1rem;
+}
+
+.clinical-recommendations ul {
+  margin: 0;
+  padding-left: 1.5rem;
+}
+
+.clinical-recommendations li {
+  color: #374151;
+  margin-bottom: 0.5rem;
+  line-height: 1.5;
+}
+
+/* Fila de rendimiento del modelo */
+.performance-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.75rem;
+}
+
+.performance-row span:first-child {
+  color: #6b7280;
+  font-weight: 500;
+  font-size: 0.875rem;
+}
+
+.performance-value {
+  font-weight: 600;
+  color: #374151;
+  font-size: 0.875rem;
+}
+
+/* Responsividad para las nuevas secciones */
+@media (max-width: 768px) {
+  .scenario-details {
+    grid-template-columns: 1fr;
+  }
+  
+  .summary-grid {
+    grid-template-columns: 1fr;
   }
 } 
