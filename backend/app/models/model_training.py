@@ -47,14 +47,6 @@ import seaborn as sns
 from sklearn.decomposition import PCA
 from sklearn.discriminant_analysis import LinearDiscriminantAnalysis as LDA
 
-# Optional UMAP
-try:
-    import umap
-    UMAP_AVAILABLE = True
-except ImportError:
-    print("UMAP not available")
-    UMAP_AVAILABLE = False
-
 # Progress bar
 try:
     from tqdm.auto import tqdm
@@ -155,14 +147,6 @@ class MLModelEvaluator:
                 reducers['LDA'] = (lda.fit_transform(X_train, y_train), lda.transform(X_test))
         except Exception as e:
             print(f"LDA failed: {e}")
-
-        # UMAP
-        if UMAP_AVAILABLE:
-            try:
-                umap_reducer = umap.UMAP(n_neighbors=15, n_components=50, random_state=42)
-                reducers['UMAP'] = (umap_reducer.fit_transform(X_train), umap_reducer.transform(X_test))
-            except Exception as e:
-                print(f"UMAP failed: {e}")
 
         self.reducers = reducers  # store for later
 

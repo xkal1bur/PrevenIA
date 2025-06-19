@@ -19,7 +19,6 @@ seaborn
 # Optional ML libraries (will work without them)
 lightgbm
 xgboost
-umap-learn
 tqdm
 # Additional dependencies for sequence processing
 requests
