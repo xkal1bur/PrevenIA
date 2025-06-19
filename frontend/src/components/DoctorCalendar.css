@@ -1,0 +1,152 @@
+/* DoctorCalendar.css */
+
+/* Contenedor general a pantalla completa */
+.calendar-container {
+  width: 100%;
+  padding: 2rem 4%;
+  background: #e8efff;             /* Fondo suave */
+  box-sizing: border-box;
+}
+
+/* Título */
+.calendar-container > h3 {
+  font-size: 2rem;
+  color: #2a4365;
+  text-align: center;
+}
+
+/* Grid de 3 columnas que ocupa todo el ancho */
+.calendar-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 2rem;
+}
+
+/* Cada “caja” */
+.calendar-box,
+.list-box,
+.form-box {
+  background: #ffffff;
+  border-radius: 0.75rem;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+  padding: 1.5rem;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Ajustes al calendario */
+.calendar-box .react-calendar {
+  width: 100%;
+  border: none;
+  border-radius: 0.5rem;
+}
+
+/* Encabezados internos */
+.list-box h4,
+.form-box h4 {
+  font-size: 1.25rem;
+  color: #2a4365;
+  margin: 0 0 1rem 0;
+  border-bottom: 1px solid #e2e8f0;
+  padding-bottom: 0.5rem;
+}
+
+/* Lista de citas */
+.evento-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  background: #f7fafc;
+  border-radius: 0.5rem;
+  padding: 0.75rem 1rem;
+  margin-bottom: 1rem;
+}
+
+.evento-info strong {
+  display: block;
+  color: #2a4365;
+  margin-bottom: 0.25rem;
+}
+
+.evento-info p {
+  margin: 0.2rem 0;
+  color: #4a5568;
+  font-size: 0.9rem;
+}
+
+.delete-btn {
+  background: transparent;
+  border: none;
+  font-size: 1.2rem;
+  cursor: pointer;
+  color: #e53e3e;
+}
+.delete-btn:hover {
+  color: #c53030;
+}
+
+.no-event {
+  flex: 1;
+  font-style: italic;
+  color: #718096;
+  text-align: center;
+  margin: 2rem 0;
+}
+
+/* Formulario de nueva cita */
+.form-box input {
+    width: 96%;
+    padding: 0.6rem 0.8rem;
+    margin-bottom: 1rem;
+    border: 1px solid #cbd5e0;
+    border-radius: 0.5rem;
+    font-size: 1rem;
+    transition: border-color 0.2s;
+}
+
+.form-box textarea {
+  width: 96%;
+  padding: 0.6rem 0.8rem;
+  margin-bottom: 1rem;
+  border: 1px solid #cbd5e0;
+  border-radius: 0.5rem;
+  font-size: 1rem;
+  transition: border-color 0.2s;
+}
+.form-box input:focus,
+.form-box textarea:focus {
+  border-color: #4299e1;
+  outline: none;
+}
+
+.form-box button {
+  margin-top: auto;
+  padding: 0.8rem;
+  background: #4299e1;
+  color: #ffffff;
+  border: none;
+  border-radius: 0.5rem;
+  font-size: 1.05rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+.form-box button:disabled {
+  background: #a0aec0;
+  cursor: not-allowed;
+}
+.form-box button:not(:disabled):hover {
+  background: #3182ce;
+}
+
+/* Responsive: 2 columnas y luego 1 */
+@media (max-width: 1024px) {
+  .calendar-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+@media (max-width: 600px) {
+  .calendar-grid {
+    grid-template-columns: 1fr;
+  }
+}

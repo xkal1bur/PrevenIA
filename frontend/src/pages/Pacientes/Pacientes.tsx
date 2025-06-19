@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect} from 'react'
 import type { ChangeEvent, FormEvent, DragEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import axios from 'axios'
@@ -17,6 +17,7 @@ interface Paciente {
   correo: string
   foto?: string | null
   doctor_id: number
+  created_at: string   // ISO date string
 }
 
 interface FormDataState {
@@ -53,71 +54,63 @@ const Pacientes: React.FC = () => {
   const [submitError, setSubmitError] = useState<string | null>(null)
   const [highlightDrag, setHighlightDrag] = useState(false)
 
-  /* Función para cerrar sesión */
+  // Cerrar sesión
   const handleLogout = (): void => {
     localStorage.removeItem('token')
     navigate('/')
   }
 
-  /* 1) Al montar, validar token y obtener datos del doctor */
+  // Al montar: validar token y obtener doctor
   useEffect(() => {
     const token = localStorage.getItem('token')
     if (!token) {
       navigate('/')
       return
     }
-
-    axios
-      .get('http://localhost:8000/doctors/me', {
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      .then((resp) => {
-        setDoctorId(resp.data.id)
-        setDoctorName(resp.data.nombre)
-        setClinicName(resp.data.clinic_name)
-      })
-      .catch((err) => {
-        console.error('Error al obtener perfil del doctor:', err)
-        localStorage.removeItem('token')
-        navigate('/')
-      })
+    axios.get('http://localhost:8000/doctors/me', {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+    .then(resp => {
+      setDoctorId(resp.data.id)
+      setDoctorName(resp.data.nombre)
+      setClinicName(resp.data.clinic_name)
+    })
+    .catch(err => {
+      console.error('Error al obtener perfil del doctor:', err)
+      localStorage.removeItem('token')
+      navigate('/')
+    })
   }, [navigate])
 
-  /* 2) Cuando tengamos doctorId, obtener lista de pacientes de ese doctor */
+  // Obtener pacientes cuando doctorId esté listo
   useEffect(() => {
     if (doctorId === null) return
-
     const token = localStorage.getItem('token')
     if (!token) return
 
-    axios
-      .get<Paciente[]>(`http://localhost:8000/pacientes/doctor/${doctorId}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      .then((response) => {
-        setPacientes(response.data)
-      })
-      .catch((err) => {
-        console.error('Error al obtener pacientes:', err)
-        setErrorPacientes('No se pudo cargar la lista de pacientes.')
-      })
+    axios.get<Paciente[]>(`http://localhost:8000/pacientes/doctor/${doctorId}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+    .then(res => setPacientes(res.data))
+    .catch(err => {
+      console.error('Error al obtener pacientes:', err)
+      setErrorPacientes('No se pudo cargar la lista de pacientes.')
+    })
   }, [doctorId])
 
-  /* Enviar formulario para crear nuevo paciente */
+  // Handle form submission
   const handleSubmit = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault()
     setIsSubmitting(true)
     setSubmitError(null)
 
-    try {
-      if (doctorId === null) {
-        setSubmitError(
-          'Aún no se ha cargado tu perfil. Recarga la página e inténtalo de nuevo.'
-        )
-        setIsSubmitting(false)
-        return
-      }
+    if (doctorId === null) {
+      setSubmitError('Perfil no cargado. Recarga e intenta de nuevo.')
+      setIsSubmitting(false)
+      return
+    }
 
+    try {
       const token = localStorage.getItem('token')
       const data = new FormData()
       data.append('dni', formData.dni)
@@ -126,12 +119,10 @@ const Pacientes: React.FC = () => {
       data.append('edad', formData.edad)
       data.append('celular', formData.celular)
       data.append('correo', formData.correo)
-      if (formData.foto) {
-        data.append('foto', formData.foto)
-      }
+      if (formData.foto) data.append('foto', formData.foto)
       data.append('doctor_id', doctorId.toString())
 
-      const respCreate = await axios.post<Paciente>(
+      const resp = await axios.post<Paciente>(
         'http://localhost:8000/register/paciente',
         data,
         {
@@ -141,10 +132,7 @@ const Pacientes: React.FC = () => {
           },
         }
       )
-
-      const nuevoPaciente = respCreate.data
-      setPacientes((prev) => [...prev, nuevoPaciente])
-
+      setPacientes(prev => [...prev, resp.data])
       setShowModal(false)
       setFormData({
         dni: '',
@@ -156,87 +144,59 @@ const Pacientes: React.FC = () => {
         foto: null,
       })
     } catch (err) {
-      console.error('Error al crear paciente:', err)
+      console.error('Error creando paciente:', err)
       setSubmitError('Error al crear paciente. Verifica los datos.')
     } finally {
       setIsSubmitting(false)
     }
   }
 
-  /* ----------  handlers drop-zone foto  ---------- */
+  // Drag & drop handlers
   const handleDragOver = (e: DragEvent<HTMLLabelElement>) => {
     e.preventDefault()
     setHighlightDrag(true)
   }
-
   const handleDragLeave = () => setHighlightDrag(false)
-
   const handleDrop = (e: DragEvent<HTMLLabelElement>) => {
     e.preventDefault()
     setHighlightDrag(false)
-    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
-      const file = e.dataTransfer.files[0]
-      setFormData(prev => ({ ...prev, foto: file }))
+    if (e.dataTransfer.files[0]) {
+      setFormData(prev => ({ ...prev, foto: e.dataTransfer.files[0] }))
     }
   }
 
-  /* ----------  cambio input genérico con filtrado ---------- */
+  // Input change handler
   const handleInputChange = (e: ChangeEvent<HTMLInputElement>) => {
     const { name, value, files } = e.target
-
     if (name === 'foto' && files) {
       setFormData(prev => ({ ...prev, foto: files[0] }))
       return
     }
-
-    let sanitized = value
-
-    switch (name) {
-      case 'dni':
-      case 'celular':
-        // sólo dígitos
-        sanitized = value.replace(/\D/g, '')
-        break
-      case 'nombres':
-      case 'apellidos':
-        // sólo letras y espacios (incluye acentos y ñ)
-        sanitized = value.replace(/[^A-Za-zÁÉÍÓÚáéíóúÑñ ]/g, '')
-        break
-      case 'edad':
-        // números sólo
-        sanitized = value.replace(/\D/g, '')
-        break
-      default:
-        break
+    let v = value
+    if (name === 'dni' || name === 'celular' || name === 'edad') {
+      v = value.replace(/\D/g, '')
     }
-
-    setFormData(prev => ({ ...prev, [name]: sanitized }))
+    if (name === 'nombres' || name === 'apellidos') {
+      v = value.replace(/[^A-Za-zÁÉÍÓÚáéíóúÑñ ]/g, '')
+    }
+    setFormData(prev => ({ ...prev, [name]: v }))
   }
 
   return (
     <div className="home-container">
-      {/* Sidebar con botón de cierre de sesión */}
       <Sidebar onLogout={handleLogout} />
-
       <div className="home-content">
-        {/* Topbar con datos de clínica y doctor */}
         <Topbar clinicName={clinicName} doctorName={doctorName} />
-
         <main className="home-main">
           <div className="pacientes-header">
             <h2>Pacientes de {doctorName}</h2>
-            <button
-              className="btn-add-paciente"
-              onClick={() => setShowModal(true)}
-            >
+            <button className="btn-add-paciente" onClick={() => setShowModal(true)}>
               <FiPlus size={18} /> Agregar
             </button>
           </div>
 
           {errorPacientes && (
-            <p style={{ color: 'red', marginBottom: '1rem' }}>
-              {errorPacientes}
-            </p>
+            <p className="error-message">{errorPacientes}</p>
           )}
 
           {pacientes.length === 0 ? (
@@ -245,9 +205,9 @@ const Pacientes: React.FC = () => {
             </p>
           ) : (
             <div className="pacientes-grid">
-              {pacientes.map((p) => (
+              {pacientes.map(p => (
                 <div key={p.id} className="paciente-card">
-                  <div 
+                  <div
                     className="paciente-content"
                     onClick={() => navigate(`/perfil/${p.dni}`)}
                   >
@@ -268,6 +228,8 @@ const Pacientes: React.FC = () => {
                       <p className="paciente-codigo">DNI: {p.dni}</p>
                       <p className="paciente-edad">Edad: {p.edad} años</p>
                       <p className="paciente-celular">Celular: {p.celular}</p>
+                      <p className="paciente-fecha">
+                      </p>
                     </div>
                   </div>
                 </div>
@@ -277,7 +239,6 @@ const Pacientes: React.FC = () => {
         </main>
       </div>
 
-      {/* Modal para agregar nuevo paciente */}
       {showModal && (
         <div className="modal-overlay">
           <div className="modal-content">
@@ -290,9 +251,7 @@ const Pacientes: React.FC = () => {
             >
               <FiX size={24} />
             </button>
-
             <h3 className="modal-title">Agregar Nuevo Paciente</h3>
-
             <form className="paciente-form" onSubmit={handleSubmit}>
               <div className="form-field">
                 <label htmlFor="dni">DNI</label>
@@ -302,12 +261,10 @@ const Pacientes: React.FC = () => {
                   value={formData.dni}
                   onChange={handleInputChange}
                   inputMode="numeric"
-                  pattern="\d*"
                   maxLength={8}
                   required
                 />
               </div>
-
               <div className="form-field">
                 <label htmlFor="nombres">Nombres</label>
                 <input
@@ -315,12 +272,9 @@ const Pacientes: React.FC = () => {
                   name="nombres"
                   value={formData.nombres}
                   onChange={handleInputChange}
-                  inputMode="text"
-                  pattern="[A-Za-zÁÉÍÓÚáéíóúÑñ ]+"
                   required
                 />
               </div>
-
               <div className="form-field">
                 <label htmlFor="apellidos">Apellidos</label>
                 <input
@@ -328,12 +282,9 @@ const Pacientes: React.FC = () => {
                   name="apellidos"
                   value={formData.apellidos}
                   onChange={handleInputChange}
-                  inputMode="text"
-                  pattern="[A-Za-zÁÉÍÓÚáéíóúÑñ ]+"
                   required
                 />
               </div>
-
               <div className="form-field">
                 <label htmlFor="edad">Edad</label>
                 <input
@@ -346,7 +297,6 @@ const Pacientes: React.FC = () => {
                   required
                 />
               </div>
-
               <div className="form-field">
                 <label htmlFor="celular">Celular</label>
                 <input
@@ -354,13 +304,10 @@ const Pacientes: React.FC = () => {
                   name="celular"
                   value={formData.celular}
                   onChange={handleInputChange}
-                  inputMode="numeric"
-                  pattern="\d*"
                   maxLength={9}
                   required
                 />
               </div>
-
               <div className="form-field">
                 <label htmlFor="correo">Correo</label>
                 <input
@@ -372,7 +319,6 @@ const Pacientes: React.FC = () => {
                   required
                 />
               </div>
-
               <div className="form-field full-width">
                 <label
                   htmlFor="foto-input"
@@ -401,10 +347,12 @@ const Pacientes: React.FC = () => {
                   />
                 </label>
               </div>
-
               {submitError && <p className="submit-error-text">{submitError}</p>}
-
-              <button type="submit" className="btn-submit-paciente" disabled={isSubmitting}>
+              <button
+                type="submit"
+                className="btn-submit-paciente"
+                disabled={isSubmitting}
+              >
                 {isSubmitting ? 'Guardando…' : 'Guardar'}
               </button>
             </form>
