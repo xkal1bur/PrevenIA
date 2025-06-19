@@ -1,11 +1,12 @@
-// src/pages/Home/Home.tsx
-
 import React, { useState, useEffect } from 'react'
-import Sidebar from '../../components/Sidebar'
-import Topbar from '../../components/Topbar'
-import './Home.css'
 import { useNavigate } from 'react-router-dom'
 import axios from 'axios'
+import Sidebar from '../../components/Sidebar'
+import Topbar from '../../components/Topbar'
+import MonthlyNewChart from '../../components/MonthlyNewChart'
+import DoctorCalendar from '../../components/DoctorCalendar'
+
+import './Home.css'
 
 interface Paciente {
   id: number
@@ -17,6 +18,18 @@ interface Paciente {
   correo: string
   foto?: string | null
   doctor_id: number
+  created_at: string
+}
+
+interface ActiveStats {
+  total: number
+  active: number
+  inactive: number
+}
+
+interface BucketUsage {
+  used_gb: number
+  total_gb: number
 }
 
 const Home: React.FC = () => {
@@ -24,87 +37,64 @@ const Home: React.FC = () => {
   const [doctorId, setDoctorId] = useState<number | null>(null)
   const [doctorName, setDoctorName] = useState<string>('')
   const [clinicName, setClinicName] = useState<string>('')
-  const [loading, setLoading] = useState<boolean>(true)
+  const [loading, setLoading] = useState(true)
   const [pacientes, setPacientes] = useState<Paciente[]>([])
   const [errorPacientes, setErrorPacientes] = useState<string | null>(null)
+  const [activeStats, setActiveStats] = useState<ActiveStats | null>(null)
+  const [bucketUsage, setBucketUsage] = useState<BucketUsage | null>(null)
 
   const handleLogout = () => {
     localStorage.removeItem('token')
     navigate('/')
   }
 
-  // Obtener datos del doctor
+  // 1) obtener perfil del doctor
   useEffect(() => {
-    const token = localStorage.getItem('token')
-    if (!token) {
-      navigate('/')
-      return
-    }
-
-    axios
-      .get('http://localhost:8000/doctors/me', {
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      .then((resp) => {
-        setDoctorId(resp.data.id)
-        setDoctorName(resp.data.nombre)
-        setClinicName(resp.data.clinic_name)
+    const fetchDoctorProfile = async () => {
+      const token = localStorage.getItem('token')
+      if (!token) {
+        navigate('/')
+        return
+      }
+      try {
+        const r = await axios.get('http://localhost:8000/doctors/me', {
+          headers: { Authorization: `Bearer ${token}` }
+        })
+        setDoctorId(r.data.id)
+        setDoctorName(r.data.nombre)
+        setClinicName(r.data.clinic_name)
         setLoading(false)
-      })
-      .catch((err) => {
-        console.error('Error al obtener perfil del doctor:', err)
+      } catch {
         localStorage.removeItem('token')
         navigate('/')
-      })
+      }
+    }
+    fetchDoctorProfile()
   }, [navigate])
 
-  // Obtener pacientes cuando tengamos el doctorId
+  // 2) obtener pacientes, stats de actividad y uso de bucket
   useEffect(() => {
     if (doctorId === null) return
-
     const token = localStorage.getItem('token')
-    if (!token) return
-
     axios
       .get<Paciente[]>(`http://localhost:8000/pacientes/doctor/${doctorId}`, {
-        headers: { Authorization: `Bearer ${token}` },
+        headers: { Authorization: `Bearer ${token}` }
       })
-      .then((response) => {
-        setPacientes(response.data)
+      .then(r => setPacientes(r.data))
+      .catch(() => setErrorPacientes('No se pudo cargar la lista'))
+    axios
+      .get<ActiveStats>(`http://localhost:8000/pacientes/stats/active_inactive?days=30`, {
+        headers: { Authorization: `Bearer ${token}` }
       })
-      .catch((err) => {
-        console.error('Error al obtener pacientes:', err)
-        setErrorPacientes('No se pudo cargar la lista de pacientes.')
+      .then(r => setActiveStats(r.data))
+      .catch(() => setActiveStats(null))
+    axios
+      .get<BucketUsage>(`http://localhost:8000/stats/bucket_usage`, {
+        headers: { Authorization: `Bearer ${token}` }
       })
+      .then(r => setBucketUsage(r.data))
+      .catch(() => setBucketUsage(null))
   }, [doctorId])
-
-  // Calcular estadísticas de edades
-  const calcularEstadisticasEdades = () => {
-    if (pacientes.length === 0) return null
-
-    const edades = pacientes.map(p => p.edad)
-    const edadMinima = Math.min(...edades)
-    const edadMaxima = Math.max(...edades)
-    const edadPromedio = edades.reduce((sum, edad) => sum + edad, 0) / edades.length
-
-    // Agrupar por rangos de edad
-    const rangos = {
-      '0-17': edades.filter(edad => edad >= 0 && edad <= 17).length,
-      '18-30': edades.filter(edad => edad >= 18 && edad <= 30).length,
-      '31-50': edades.filter(edad => edad >= 31 && edad <= 50).length,
-      '51-70': edades.filter(edad => edad >= 51 && edad <= 70).length,
-      '71+': edades.filter(edad => edad >= 71).length,
-    }
-
-    return {
-      edadMinima,
-      edadMaxima,
-      edadPromedio: Math.round(edadPromedio * 10) / 10,
-      rangos
-    }
-  }
-
-  const estadisticasEdades = calcularEstadisticasEdades()
 
   if (loading) {
     return (
@@ -114,94 +104,176 @@ const Home: React.FC = () => {
     )
   }
 
+  const total = pacientes.length
+
+  // nuevos en últimos 30 días
+  const nuevos30 = (() => {
+    const ahora = new Date()
+    const hace30 = new Date(ahora.getTime() - 30 * 24 * 60 * 60 * 1000)
+    return pacientes.filter(p => new Date(p.created_at) >= hace30).length
+  })()
+
+  // estadísticas de edades
+  const estadEdades = (() => {
+    if (!total) return null
+    const edades = pacientes.map(p => p.edad)
+    const min = Math.min(...edades)
+    const max = Math.max(...edades)
+    const prom = Math.round((edades.reduce((a, b) => a + b, 0) / edades.length) * 10) / 10
+    const rangos = {
+      '0-17': edades.filter(e => e <= 17).length,
+      '18-30': edades.filter(e => e >= 18 && e <= 30).length,
+      '31-50': edades.filter(e => e >= 31 && e <= 50).length,
+      '51-70': edades.filter(e => e >= 51 && e <= 70).length,
+      '71+': edades.filter(e => e >= 71).length
+    }
+    return { min, max, prom, rangos }
+  })()
+
   return (
     <div className="home-container">
       <Sidebar onLogout={handleLogout} />
 
       <div className="home-content">
         <Topbar clinicName={clinicName} doctorName={doctorName} />
-
-        <main className="home-main">
-          <div className="dashboard-header">
-            <h2>Dashboard - Dr. {doctorName}</h2>
+        <div className="dash">
+          {/* ─── Cabecera ─── */}
+          <div className="dashboard-top">
+            <h2 className="dashboard-title">Dashboard - Dr. {doctorName}</h2>
+            <h3 className="ultimos-title">Últimos Pacientes Registrados</h3>
           </div>
 
           {errorPacientes && (
-            <div className="error-message">
-              {errorPacientes}
-            </div>
+            <div className="error-message">{errorPacientes}</div>
           )}
 
           <div className="statistics-container">
-            {/* Estadística de cantidad de pacientes */}
+            {/* Total */}
             <div className="stat-card">
-              <div className="stat-header">
-                <h3>Total de Pacientes</h3>
-              </div>
+              <div className="stat-header"><h3>Total de Pacientes</h3></div>
               <div className="stat-content">
-                <div className="stat-number">{pacientes.length}</div>
+                <div className="stat-number">{total}</div>
                 <div className="stat-description">
-                  {pacientes.length === 1 ? 'paciente registrado' : 'pacientes registrados'}
+                  {total === 1 ? 'Paciente Registrado' : 'Pacientes Registrados'}
                 </div>
               </div>
             </div>
 
-            {/* Estadísticas de edades */}
-            {estadisticasEdades && (
+            {/* Nuevos */}
+            <div className="stat-card">
+              <div className="stat-header"><h3>Nuevos (30 días)</h3></div>
+              <div className="stat-content">
+                <div className="stat-number">+{nuevos30}</div>
+                <div className="stat-description">Pacientes Nuevos</div>
+              </div>
+            </div>
+
+            {/* Actividad */}
+            {activeStats && total > 0 && (
               <div className="stat-card">
-                <div className="stat-header">
-                  <h3>Edades de Pacientes</h3>
+                <div className="stat-header"><h3>Actividad (30 días)</h3></div>
+                <div className="stat-content">
+                  <div className="age-stat">
+                    <span className="age-label">Activos:</span>
+                    <span className="age-value">
+                      {Math.round((activeStats.active / total) * 100)}%
+                    </span>
+                  </div>
+                  <div className="age-stat">
+                    <span className="age-label">Inactivos:</span>
+                    <span className="age-value">
+                      {Math.round((activeStats.inactive / total) * 100)}%
+                    </span>
+                  </div>
                 </div>
+              </div>
+            )}
+
+            {/* Edades */}
+            {estadEdades && (
+              <div className="stat-card">
+                <div className="stat-header"><h3>Edades</h3></div>
                 <div className="stat-content">
                   <div className="age-summary">
                     <div className="age-stat">
                       <span className="age-label">Promedio:</span>
-                      <span className="age-value">{estadisticasEdades.edadPromedio} años</span>
+                      <span className="age-value">{estadEdades.prom} años</span>
                     </div>
                     <div className="age-stat">
                       <span className="age-label">Rango:</span>
-                      <span className="age-value">{estadisticasEdades.edadMinima} - {estadisticasEdades.edadMaxima} años</span>
+                      <span className="age-value">
+                        {estadEdades.min} - {estadEdades.max} años
+                      </span>
                     </div>
                   </div>
                 </div>
               </div>
             )}
 
-            {/* Distribución por rangos de edad */}
-            {estadisticasEdades && (
-              <div className="stat-card age-distribution">
-                <div className="stat-header">
-                  <h3>Distribución por Edades</h3>
+            {/* Uso de Bucket */}
+            {bucketUsage && (
+              <div className="stat-card">
+                <div className="stat-header"><h3>Uso de Bucket</h3></div>
+                <div className="stat-content">
+                  <div className="stat-number">
+                    {bucketUsage.used_gb} GB
+                  </div>
+                  <div className="stat-description">Almacenamiento usado</div>
                 </div>
+              </div>
+            )}
+
+            {/* Últimos 3 pacientes */}
+            {[0, 1, 2].map((_, idx) => {
+              const p = pacientes[pacientes.length - 1 - idx]
+              return (
+                <div className="stat-card" key={idx}>
+                  {p ? (
+                    <div className="stat-content">
+                      <p className="paciente-nombre-mini">
+                        {p.nombres} {p.apellidos}
+                      </p>
+                      <p className="paciente-codigo-mini">DNI: {p.dni}</p>
+                      <p className="paciente-edad-mini">Edad: {p.edad} años</p>
+                      <p className="paciente-celular-mini">Cel: {p.celular}</p>
+                    </div>
+                  ) : (
+                    <div className="stat-content empty">— vacío —</div>
+                  )}
+                </div>
+              )
+            })}
+
+            {/* Distribución Edades */}
+            {estadEdades && (
+              <div className="stat-card age-distribution">
+                <div className="stat-header"><h3>Distribución Edades</h3></div>
                 <div className="stat-content">
                   <div className="age-ranges">
-                    {Object.entries(estadisticasEdades.rangos).map(([rango, cantidad]) => (
-                      <div key={rango} className="age-range-item">
-                        <div className="age-range-label">{rango} años</div>
+                    {Object.entries(estadEdades.rangos).map(([r, c]) => (
+                      <div key={r} className="age-range-item">
+                        <div className="age-range-label">{r} años</div>
                         <div className="age-range-bar">
-                          <div 
+                          <div
                             className="age-range-fill"
-                            style={{ 
-                              width: `${pacientes.length > 0 ? (cantidad / pacientes.length) * 100 : 0}%` 
-                            }}
-                          ></div>
+                            style={{ width: `${(c / total) * 100}%` }}
+                          />
                         </div>
-                        <div className="age-range-count">{cantidad}</div>
+                        <div className="age-range-count">{c}</div>
                       </div>
                     ))}
                   </div>
                 </div>
               </div>
             )}
-
-            {pacientes.length === 0 && !errorPacientes && (
-              <div className="no-data-message">
-                <p>No hay pacientes registrados aún.</p>
-                <p>Los gráficos aparecerán cuando agregues pacientes.</p>
-              </div>
-            )}
           </div>
-        </main>
+
+          {/* Gráfico mensual */}
+          <MonthlyNewChart />
+
+          {/* Calendario de citas */}
+          <DoctorCalendar />
+        </div>
       </div>
     </div>
   )

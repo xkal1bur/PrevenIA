@@ -3,7 +3,6 @@ import { NavLink } from 'react-router-dom'
 import {
   FiHome,
   FiUsers,
-  FiMessageSquare,
   FiLogOut,
   FiMenu,
   FiX,
@@ -57,15 +56,6 @@ const Sidebar: React.FC<SidebarProps> = ({ onLogout }) => {
           >
             <FiUsers className="sidebar-icon" />
             <span className="link-text">Pacientes</span>
-          </NavLink>
-
-          <NavLink
-            to="/feedback"
-            className="sidebar-link"
-            onClick={handleLinkClick}
-          >
-            <FiMessageSquare className="sidebar-icon" />
-            <span className="link-text">Feedback</span>
           </NavLink>
         </nav>
 
