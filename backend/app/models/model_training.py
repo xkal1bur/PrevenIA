@@ -61,7 +61,7 @@ class MLModelEvaluator:
     def __init__(self, data_path='data.csv', output_dir='ml_results', n_jobs=96):
         """Create an evaluator for BRCA2 embeddings stored in CSV files.
 
-        data.csv must contain the embeddings and a column 'labels' (1 = pathogenic, 0 = benign).
+        data.csv must contain the embeddings and a column 'label' (1 = pathogenic, 0 = benign).
         """
         self.data_path = data_path
         self.output_dir = Path(output_dir)
@@ -93,26 +93,30 @@ class MLModelEvaluator:
 
         print(f"Dataset shape: {df.shape}")
 
-        if 'labels' not in df.columns:
-            print("❌ Columna 'labels' no encontrada en el CSV.")
+        if 'label' not in df.columns:
+            print("❌ Columna 'label' no encontrada en el CSV.")
             return False
 
         # ------------------------------------------------------------------
         # 2. Train/Validation/Test split (70/15/15)
         # ------------------------------------------------------------------
         from sklearn.model_selection import train_test_split
-        train_val_df, test_df = train_test_split(df, test_size=0.15, random_state=42, stratify=df['labels'])
-        train_df, val_df = train_test_split(train_val_df, test_size=0.1765, random_state=42, stratify=train_val_df['labels'])  # 0.1765*0.85 ~= 0.15
+        train_val_df, test_df = train_test_split(df, test_size=0.15, random_state=42, stratify=df['label'])
+        train_df, val_df = train_test_split(train_val_df, test_size=0.1765, random_state=42, stratify=train_val_df['label'])  # 0.1765*0.85 ~= 0.15
         train_df = pd.concat([train_df, val_df], ignore_index=True)  # combine for training (CV used later)
 
         # ------------------------------------------------------------------
         # 3. Split features/targets
         # ------------------------------------------------------------------
-        X_train = train_df.drop(columns=['labels']).values
-        y_train = train_df['labels'].astype(int).values
+        X_train = train_df.drop(columns=['label']).values
+        y_train = train_df['label'].astype(int).values
 
-        X_test = test_df.drop(columns=['labels']).values
-        y_test = test_df['labels'].astype(int).values
+        X_test = test_df.drop(columns=['label']).values
+        y_test = test_df['label'].astype(int).values
+
+        # Guardar en la instancia para uso posterior (e.g., ensembles)
+        self.X_train = X_train
+        self.X_test = X_test
 
         print(f"Dimensión de características: {X_train.shape[1]}")
 
@@ -497,22 +501,31 @@ class MLModelEvaluator:
                              key=lambda x: x[1]['test_pr_auc'], reverse=True)
         top_6 = sorted_models[:6]
         
-        for name, results in top_6:
+        for rank, (name, results) in enumerate(top_6, 1):
             model_info = self.best_models[name]
-            safe_name = name.replace(' ', '_').replace('(', '').replace(')', '')
-            
-            # Save model
-            model_file = models_dir / f'{safe_name}_model.pkl'
+
+            # Descomponer el nombre "Representación | Modelo"
+            if '|' in name:
+                rep_part, model_part = map(str.strip, name.split('|', 1))
+            else:
+                rep_part, model_part = 'Original', name.strip()
+
+            # Generar nombre de archivo con formato: rank-rep-model_name.pk
+            filename_base = f"{rank}-{rep_part.lower().replace(' ', '_')}-{model_part.lower().replace(' ', '_')}"
+            filename_base = filename_base.replace('(', '').replace(')', '')
+
+            # Guardar modelo
+            model_file = models_dir / f"{filename_base}.pk"
             with open(model_file, 'wb') as f:
                 pickle.dump(model_info['model'], f)
-            
-            # Save scaler if exists
+
+            # Guardar scaler si existe
             if model_info['scaler'] is not None:
-                scaler_file = models_dir / f'{safe_name}_scaler.pkl'
+                scaler_file = models_dir / f"{filename_base}-scaler.pk"
                 with open(scaler_file, 'wb') as f:
                     pickle.dump(model_info['scaler'], f)
-            
-            print(f"Modelo guardado: {safe_name} (AUC: {results['test_auc']:.4f})")
+
+            print(f"Modelo guardado: {model_file.name} (AUC: {results['test_auc']:.4f})")
     
     def create_visualizations(self):
         """Create visualizations of results"""
@@ -575,8 +588,8 @@ class MLModelEvaluator:
                        xerr=top_10['cv_auc_std'], alpha=0.7)
         axes[1, 1].set_yticks(range(len(top_10)))
         axes[1, 1].set_yticklabels([name[:15] for name in top_10.index])
-        axes[1, 1].set_xlabel('Cross-Validation AUC')
-        axes[1, 1].set_title('CV AUC ± Std (Top 10 Modelos)')
+        axes[1, 1].set_xlabel('Cross-Validation PR AUC')
+        axes[1, 1].set_title('CV PR AUC ± Std (Top 10 Modelos)')
         axes[1, 1].grid(True, alpha=0.3)
         
         plt.tight_layout()
