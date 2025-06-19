@@ -45,24 +45,37 @@ except ImportError:
 import matplotlib.pyplot as plt
 import seaborn as sns
 from sklearn.decomposition import PCA
+from sklearn.discriminant_analysis import LinearDiscriminantAnalysis as LDA
+
+# Optional UMAP
+try:
+    import umap
+    UMAP_AVAILABLE = True
+except ImportError:
+    print("UMAP not available")
+    UMAP_AVAILABLE = False
+
+# Progress bar
+try:
+    from tqdm.auto import tqdm
+    TQDM_AVAILABLE = True
+except ImportError:
+    TQDM_AVAILABLE = False
+
 import warnings
 warnings.filterwarnings('ignore')
 
 class MLModelEvaluator:
-    def __init__(self, train_path='train_set.csv',
-                 val_path='validation_set.csv',
-                 test_path='test_set.csv',
-                 output_dir='ml_results'):
+    def __init__(self, data_path='data.csv', output_dir='ml_results', n_jobs=96):
         """Create an evaluator for BRCA2 embeddings stored in CSV files.
 
-        Each CSV must contain the embedding columns plus a column called
-        'labels' that encodes the target (1 = pathogenic, 0 = benign).
+        data.csv must contain the embeddings and a column 'labels' (1 = pathogenic, 0 = benign).
         """
-        self.train_path = train_path
-        self.val_path = val_path
-        self.test_path = test_path
+        self.data_path = data_path
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(exist_ok=True)
+        
+        self.n_jobs = n_jobs  # number of parallel threads/cores
         
         self.X_train = None
         self.X_test = None
@@ -72,36 +85,37 @@ class MLModelEvaluator:
         self.best_models = {}
         
     def load_and_preprocess_data(self):
-        """Load BRCA2 embeddings from CSV files (train/val/test) and apply preprocessing."""
+        """Load data.csv, split into train/test, create multiple dimensionality reductions."""
         print("="*60)
-        print("CARGANDO Y PREPROCESANDO DATOS (BRCA2)")
+        print("CARGANDO Y PREPROCESANDO DATOS")
         print("="*60)
 
         # ------------------------------------------------------------------
-        # 1. Read CSV files
+        # 1. Read CSV file
         # ------------------------------------------------------------------
         try:
-            train_df = pd.read_csv(self.train_path)
-            val_df = pd.read_csv(self.val_path)
-            test_df = pd.read_csv(self.test_path)
+            df = pd.read_csv(self.data_path)
         except Exception as e:
-            print(f"❌ No se pudieron leer los CSV: {e}")
+            print(f"❌ No se pudo leer el CSV {self.data_path}: {e}")
             return False
 
-        print(f"Train: {train_df.shape}, Validation: {val_df.shape}, Test: {test_df.shape}")
+        print(f"Dataset shape: {df.shape}")
+
+        if 'labels' not in df.columns:
+            print("❌ Columna 'labels' no encontrada en el CSV.")
+            return False
 
         # ------------------------------------------------------------------
-        # 2. Merge train and validation sets (use CV later for hyper-parameter tuning)
+        # 2. Train/Validation/Test split (70/15/15)
         # ------------------------------------------------------------------
-        train_df = pd.concat([train_df, val_df], ignore_index=True)
+        from sklearn.model_selection import train_test_split
+        train_val_df, test_df = train_test_split(df, test_size=0.15, random_state=42, stratify=df['labels'])
+        train_df, val_df = train_test_split(train_val_df, test_size=0.1765, random_state=42, stratify=train_val_df['labels'])  # 0.1765*0.85 ~= 0.15
+        train_df = pd.concat([train_df, val_df], ignore_index=True)  # combine for training (CV used later)
 
         # ------------------------------------------------------------------
         # 3. Split features/targets
         # ------------------------------------------------------------------
-        if 'labels' not in train_df.columns or 'labels' not in test_df.columns:
-            print("❌ Columna 'labels' no encontrada en los CSVs.")
-            return False
-
         X_train = train_df.drop(columns=['labels']).values
         y_train = train_df['labels'].astype(int).values
 
@@ -121,35 +135,44 @@ class MLModelEvaluator:
                 arr[nan_mask | inf_mask] = 0
 
         # ------------------------------------------------------------------
-        # 5. PCA (95% varianza)
+        # 5. Dimensionality Reduction techniques
         # ------------------------------------------------------------------
-        print("Aplicando PCA para reducir dimensionalidad (95% varianza)…")
+        reducers = {}
+
+        # Original (no reduction)
+        reducers['Original'] = (X_train, X_test)
+
+        # PCA
+        print("Aplicando PCA (95% varianza)…")
         pca = PCA(n_components=0.95, random_state=42)
-        X_train_reduced = pca.fit_transform(X_train)
-        X_test_reduced = pca.transform(X_test)
+        reducers['PCA'] = (pca.fit_transform(X_train), pca.transform(X_test))
 
-        print(f"Dimensionalidad reducida: {X_train.shape[1]} → {X_train_reduced.shape[1]} componentes")
-        print(f"Varianza explicada total: {pca.explained_variance_ratio_.sum():.4f}")
+        # LDA (only if binary classification -> 1 comp)
+        try:
+            lda_components = min(len(np.unique(y_train))-1, 10)
+            if lda_components >= 1:
+                lda = LDA(n_components=lda_components)
+                reducers['LDA'] = (lda.fit_transform(X_train, y_train), lda.transform(X_test))
+        except Exception as e:
+            print(f"LDA failed: {e}")
 
-        # ------------------------------------------------------------------
-        # 6. Guardar en atributos de instancia
-        # ------------------------------------------------------------------
-        self.X_original = X_train
-        self.X_train_orig = X_train
-        self.X_test_orig = X_test
+        # UMAP
+        if UMAP_AVAILABLE:
+            try:
+                umap_reducer = umap.UMAP(n_neighbors=15, n_components=50, random_state=42)
+                reducers['UMAP'] = (umap_reducer.fit_transform(X_train), umap_reducer.transform(X_test))
+            except Exception as e:
+                print(f"UMAP failed: {e}")
 
-        self.X_reduced = X_train_reduced
-        self.X_train = X_train_reduced
-        self.X_test = X_test_reduced
+        self.reducers = reducers  # store for later
 
+        # Store y and original for potential tree models
         self.y_train = y_train
         self.y_test = y_test
-        self.pca = pca
 
-        # Resumen
-        print(f"Train samples: {self.X_train.shape[0]}, Test samples: {self.X_test.shape[0]}")
-        print(f"Train – Pathogenic: {self.y_train.sum()}, Benign: {(self.y_train == 0).sum()}")
-        print(f"Test  – Pathogenic: {self.y_test.sum()}, Benign: {(self.y_test == 0).sum()}")
+        print("Resumen reducción dimensional:")
+        for key, (tr, te) in reducers.items():
+            print(f"  {key}: {tr.shape[1]} características")
 
         return True
     
@@ -295,9 +318,9 @@ class MLModelEvaluator:
             #   Hyper-parameter optimisation (GridSearchCV)
             # --------------------------------------------------------------
             if param_grid:
-                print("  ↳ Buscando mejores hiperparámetros… (GridSearchCV)")
+                print("  ↳ Buscando mejores hiperparámetros… (GridSearchCV - métrica: PR AUC)")
                 grid = GridSearchCV(model, param_grid, cv=3, n_jobs=-1,
-                                    scoring='roc_auc', verbose=1)
+                                    scoring='average_precision', verbose=1)
                 grid.fit(X_train, y_train)
                 model = grid.best_estimator_
                 print(f"     Mejores parámetros: {grid.best_params_}")
@@ -344,8 +367,8 @@ class MLModelEvaluator:
             })
             
             # Cross-validation score (reduced CV to speed up)
-            print(f"  Ejecutando validación cruzada...")
-            cv_scores = cross_val_score(model, X_train, y_train, cv=3, scoring='roc_auc')
+            print(f"  Ejecutando validación cruzada (PR AUC)...")
+            cv_scores = cross_val_score(model, X_train, y_train, cv=3, scoring='average_precision', n_jobs=self.n_jobs)
             results['cv_auc_mean'] = cv_scores.mean()
             results['cv_auc_std'] = cv_scores.std()
             
@@ -373,48 +396,47 @@ class MLModelEvaluator:
         print("EVALUANDO MODELOS DE MACHINE LEARNING")
         print("="*60)
         
-        models = self.get_models()
-        
-        # Optional: Scale features for some models
-        scaler = StandardScaler()
-        X_train_scaled = scaler.fit_transform(self.X_train)
-        X_test_scaled = scaler.transform(self.X_test)
-        
-        # Models that benefit from scaling (use PCA reduced data)
-        scale_models = ['Logistic Regression', 'SVM (RBF)', 'SVM (Linear)', 
-                      'K-Nearest Neighbors', 'MLP Neural Network', 'Deep MLP']
-        
-        # Tree-based models that work better with original high-dimensional data
-        tree_models = ['Random Forest', 'Extra Trees', 'Decision Tree', 'Gradient Boosting', 'Hist Gradient Boosting', 'Bagging', 'XGBoost' if XGB_AVAILABLE else '']
-        
-        for name, model in models.items():
-            if name in scale_models:
-                # Use scaled PCA data for these models
+        # Iterate over each dimensionality reduction
+        for red_name, (X_train_red, X_test_red) in self.reducers.items():
+            print("\n" + "-"*60)
+            print(f"USANDO REPRESENTACIÓN: {red_name}")
+            print("-"*60)
+
+            models = self.get_models()
+
+            # Scale where beneficial
+            scaler = StandardScaler()
+            X_train_scaled = scaler.fit_transform(X_train_red)
+            X_test_scaled = scaler.transform(X_test_red)
+
+            scale_models = ['Logistic Regression', 'SVM (RBF)', 'SVM (Linear)', 
+                            'K-Nearest Neighbors', 'MLP Neural Network', 'Deep MLP']
+
+            iterator = models.items()
+            if TQDM_AVAILABLE:
+                iterator = tqdm(iterator, total=len(models), desc=f"Modelos ({red_name})")
+
+            for name, model in iterator:
+                full_name = f"{red_name} | {name}"
+
+                # set n_jobs globally where supported
+                if hasattr(model, 'n_jobs'):
+                    try:
+                        model.n_jobs = self.n_jobs
+                    except Exception:
+                        pass
+
+                # Evaluate
+                X_tr, X_te = (X_train_scaled, X_test_scaled) if name in scale_models else (X_train_red, X_test_red)
+
                 results, trained_model = self.evaluate_model(
-                    name, model, X_train_scaled, X_test_scaled, self.y_train, self.y_test,
+                    full_name, model, X_tr, X_te, self.y_train, self.y_test,
                     self.get_param_grids().get(name)
                 )
+
                 if results is not None:
-                    self.results[name] = results
-                    self.best_models[name] = {'model': trained_model, 'scaler': scaler}
-            elif name in tree_models:
-                # Use original high-dimensional data for tree models
-                results, trained_model = self.evaluate_model(
-                    name, model, self.X_train_orig, self.X_test_orig, self.y_train, self.y_test,
-                    self.get_param_grids().get(name)
-                )
-                if results is not None:
-                    self.results[name] = results
-                    self.best_models[name] = {'model': trained_model, 'scaler': None}
-            else:
-                # Use PCA reduced data for other models
-                results, trained_model = self.evaluate_model(
-                    name, model, self.X_train, self.X_test, self.y_train, self.y_test,
-                    self.get_param_grids().get(name)
-                )
-                if results is not None:
-                    self.results[name] = results
-                    self.best_models[name] = {'model': trained_model, 'scaler': None}
+                    self.results[full_name] = results
+                    self.best_models[full_name] = {'model': trained_model, 'scaler': scaler if name in scale_models else None}
     
     def create_ensemble_models(self):
         """Create ensemble models from best performers"""
