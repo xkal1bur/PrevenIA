@@ -1,4 +1,4 @@
-import torch
+# import torch  # Torch no longer required; kept commented to avoid dependency
 import pandas as pd
 import numpy as np
 import pickle
@@ -9,14 +9,15 @@ from pathlib import Path
 from sklearn.model_selection import train_test_split, cross_val_score, GridSearchCV
 from sklearn.metrics import (
     roc_auc_score, accuracy_score, precision_recall_fscore_support,
-    classification_report, confusion_matrix, roc_curve
+    classification_report, confusion_matrix, roc_curve, average_precision_score
 )
 from sklearn.preprocessing import StandardScaler
 
 # Machine Learning Models
 from sklearn.ensemble import (
     RandomForestClassifier, ExtraTreesClassifier, 
-    AdaBoostClassifier, VotingClassifier
+    AdaBoostClassifier, VotingClassifier,
+    GradientBoostingClassifier, HistGradientBoostingClassifier, BaggingClassifier
 )
 from sklearn.linear_model import LogisticRegression, RidgeClassifier
 from sklearn.svm import SVC
@@ -33,6 +34,14 @@ except ImportError:
     print("LightGBM not available")
     LGB_AVAILABLE = False
 
+# Optional XGBoost
+try:
+    from xgboost import XGBClassifier
+    XGB_AVAILABLE = True
+except ImportError:
+    print("XGBoost not available")
+    XGB_AVAILABLE = False
+
 import matplotlib.pyplot as plt
 import seaborn as sns
 from sklearn.decomposition import PCA
@@ -40,11 +49,18 @@ import warnings
 warnings.filterwarnings('ignore')
 
 class MLModelEvaluator:
-    def __init__(self, embeddings_path='brca1_embeddings.pth', 
-                 data_path='41586_2018_461_MOESM3_ESM.xlsx', 
+    def __init__(self, train_path='train_set.csv',
+                 val_path='validation_set.csv',
+                 test_path='test_set.csv',
                  output_dir='ml_results'):
-        self.embeddings_path = embeddings_path
-        self.data_path = data_path
+        """Create an evaluator for BRCA2 embeddings stored in CSV files.
+
+        Each CSV must contain the embedding columns plus a column called
+        'labels' that encodes the target (1 = pathogenic, 0 = benign).
+        """
+        self.train_path = train_path
+        self.val_path = val_path
+        self.test_path = test_path
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(exist_ok=True)
         
@@ -56,114 +72,86 @@ class MLModelEvaluator:
         self.best_models = {}
         
     def load_and_preprocess_data(self):
-        """Load embeddings and BRCA1 data with same preprocessing as notebook"""
+        """Load BRCA2 embeddings from CSV files (train/val/test) and apply preprocessing."""
         print("="*60)
-        print("CARGANDO Y PREPROCESANDO DATOS")
+        print("CARGANDO Y PREPROCESANDO DATOS (BRCA2)")
         print("="*60)
-        
-        # Load embeddings
-        print("Cargando embeddings...")
-        embeddings = torch.load(self.embeddings_path, map_location='cpu')
-        print(f"Embeddings es un diccionario con {len(embeddings)} elementos")
-        
-        # Load BRCA1 data
-        print("Cargando datos BRCA1...")
-        brca1 = pd.read_excel(self.data_path, header=2)
-        brca1 = brca1[[
-            'chromosome', 'position (hg19)', 'reference', 'alt', 
-            'function.score.mean', 'func.class'
-        ]]
-        
-        brca1.rename(columns={
-            'chromosome': 'chrom',
-            'position (hg19)': 'pos',
-            'reference': 'ref',
-            'alt': 'alt',
-            'function.score.mean': 'score',
-            'func.class': 'class',
-        }, inplace=True)
-        
-        brca1['class'] = brca1['class'].replace(['FUNC', 'INT'], 'FUNC/INT')
-        brca1['target'] = brca1['class'].apply(lambda x: 1 if x == 'LOF' else 0)
-        
-        print(f"Shape de brca1: {brca1.shape}")
-        
-        # Verificar tipo de datos de embeddings
-        sample_embedding = embeddings[list(embeddings.keys())[0]]
-        print(f"Tipo de datos de embeddings: {sample_embedding.dtype}")
-        
-        # Align embeddings and targets
-        brca1_reset = brca1.reset_index(drop=True)
-        brca1_reset['idx'] = brca1_reset.index
-        
-        aligned_embeddings = []
-        aligned_targets = []
-        
-        for idx in brca1_reset['idx']:
-            if idx in embeddings:
-                # Convert to float32 to avoid BFloat16 issues
-                embedding_float32 = embeddings[idx].to(torch.float32)
-                aligned_embeddings.append(embedding_float32)
-                aligned_targets.append(brca1_reset.loc[idx, 'target'])
-            else:
-                print(f"Warning: idx {idx} no encontrado en embeddings")
-        
-        print(f"Número de muestras alineadas: {len(aligned_embeddings)}")
-        
-        if aligned_embeddings:
-            # Stack all embeddings into a single tensor
-            embeddings_tensor = torch.stack(aligned_embeddings)
-            targets_tensor = torch.tensor(aligned_targets, dtype=torch.float32)
-            
-            print(f"Shape de embeddings_tensor: {embeddings_tensor.shape}")
-            print(f"Tipo de datos final: {embeddings_tensor.dtype}")
-            
-            # Convert to numpy for sklearn
-            X = embeddings_tensor.cpu().numpy()
-            y = targets_tensor.cpu().numpy()
-            
-            # Check for NaN or infinite values
-            print("Verificando datos...")
-            nan_mask = np.isnan(X)
-            inf_mask = np.isinf(X)
-            if nan_mask.any():
-                print(f"Warning: {nan_mask.sum()} valores NaN encontrados, reemplazando con 0")
-                X[nan_mask] = 0
-            if inf_mask.any():
-                print(f"Warning: {inf_mask.sum()} valores infinitos encontrados, reemplazando con 0")
-                X[inf_mask] = 0
-            
-            # Apply PCA for dimensionality reduction to prevent convergence issues
-            print("Aplicando PCA para reducir dimensionalidad...")
-            pca = PCA(n_components=0.95, random_state=42)  # Keep 95% of variance
-            X_reduced = pca.fit_transform(X)
-            print(f"Dimensionalidad reducida de {X.shape[1]} a {X_reduced.shape[1]} features")
-            print(f"Varianza explicada: {pca.explained_variance_ratio_.sum():.4f}")
-            
-            # Store both original and reduced data
-            self.X_original = X
-            self.X_reduced = X_reduced
-            self.pca = pca
-            
-            # Train/test split (80/20) - use reduced data by default
-            self.X_train, self.X_test, self.y_train, self.y_test = train_test_split(
-                X_reduced, y, test_size=0.2, random_state=42, stratify=y
-            )
-            
-            # Also create original data splits for tree-based models
-            self.X_train_orig, self.X_test_orig, _, _ = train_test_split(
-                X, y, test_size=0.2, random_state=42, stratify=y
-            )
-            
-            print(f"Train set: {self.X_train.shape[0]} samples, {self.X_train.shape[1]} features (PCA)")
-            print(f"Test set: {self.X_test.shape[0]} samples")
-            print(f"Train - LOF: {self.y_train.sum()}, FUNC/INT: {(self.y_train == 0).sum()}")
-            print(f"Test - LOF: {self.y_test.sum()}, FUNC/INT: {(self.y_test == 0).sum()}")
-            
-            return True
-        else:
-            print("Error: No se pudieron alinear embeddings y targets")
+
+        # ------------------------------------------------------------------
+        # 1. Read CSV files
+        # ------------------------------------------------------------------
+        try:
+            train_df = pd.read_csv(self.train_path)
+            val_df = pd.read_csv(self.val_path)
+            test_df = pd.read_csv(self.test_path)
+        except Exception as e:
+            print(f"❌ No se pudieron leer los CSV: {e}")
             return False
+
+        print(f"Train: {train_df.shape}, Validation: {val_df.shape}, Test: {test_df.shape}")
+
+        # ------------------------------------------------------------------
+        # 2. Merge train and validation sets (use CV later for hyper-parameter tuning)
+        # ------------------------------------------------------------------
+        train_df = pd.concat([train_df, val_df], ignore_index=True)
+
+        # ------------------------------------------------------------------
+        # 3. Split features/targets
+        # ------------------------------------------------------------------
+        if 'labels' not in train_df.columns or 'labels' not in test_df.columns:
+            print("❌ Columna 'labels' no encontrada en los CSVs.")
+            return False
+
+        X_train = train_df.drop(columns=['labels']).values
+        y_train = train_df['labels'].astype(int).values
+
+        X_test = test_df.drop(columns=['labels']).values
+        y_test = test_df['labels'].astype(int).values
+
+        print(f"Dimensión de características: {X_train.shape[1]}")
+
+        # ------------------------------------------------------------------
+        # 4. Limpieza de NaN / Inf
+        # ------------------------------------------------------------------
+        for name, arr in [('train', X_train), ('test', X_test)]:
+            nan_mask = np.isnan(arr)
+            inf_mask = np.isinf(arr)
+            if nan_mask.any() or inf_mask.any():
+                print(f"  ↳ {name}: reemplazando {nan_mask.sum()} NaN y {inf_mask.sum()} Inf por 0")
+                arr[nan_mask | inf_mask] = 0
+
+        # ------------------------------------------------------------------
+        # 5. PCA (95% varianza)
+        # ------------------------------------------------------------------
+        print("Aplicando PCA para reducir dimensionalidad (95% varianza)…")
+        pca = PCA(n_components=0.95, random_state=42)
+        X_train_reduced = pca.fit_transform(X_train)
+        X_test_reduced = pca.transform(X_test)
+
+        print(f"Dimensionalidad reducida: {X_train.shape[1]} → {X_train_reduced.shape[1]} componentes")
+        print(f"Varianza explicada total: {pca.explained_variance_ratio_.sum():.4f}")
+
+        # ------------------------------------------------------------------
+        # 6. Guardar en atributos de instancia
+        # ------------------------------------------------------------------
+        self.X_original = X_train
+        self.X_train_orig = X_train
+        self.X_test_orig = X_test
+
+        self.X_reduced = X_train_reduced
+        self.X_train = X_train_reduced
+        self.X_test = X_test_reduced
+
+        self.y_train = y_train
+        self.y_test = y_test
+        self.pca = pca
+
+        # Resumen
+        print(f"Train samples: {self.X_train.shape[0]}, Test samples: {self.X_test.shape[0]}")
+        print(f"Train – Pathogenic: {self.y_train.sum()}, Benign: {(self.y_train == 0).sum()}")
+        print(f"Test  – Pathogenic: {self.y_test.sum()}, Benign: {(self.y_test == 0).sum()}")
+
+        return True
     
     def get_models(self):
         """Define all models to test"""
@@ -190,7 +178,14 @@ class MLModelEvaluator:
             'MLP Neural Network': MLPClassifier(
                 hidden_layer_sizes=(100, 50), random_state=42, max_iter=1000
             ),
-            'AdaBoost': AdaBoostClassifier(random_state=42)
+            'Deep MLP': MLPClassifier(
+                hidden_layer_sizes=(512, 256, 128), random_state=42, max_iter=5000,
+                early_stopping=True
+            ),
+            'AdaBoost': AdaBoostClassifier(random_state=42),
+            'Gradient Boosting': GradientBoostingClassifier(random_state=42),
+            'Hist Gradient Boosting': HistGradientBoostingClassifier(random_state=42),
+            'Bagging': BaggingClassifier(random_state=42)
         }
         
         # Add LightGBM if available
@@ -199,11 +194,92 @@ class MLModelEvaluator:
                 random_state=42, verbose=-1
             )
         
+        # Add XGBoost if available
+        if XGB_AVAILABLE:
+            models['XGBoost'] = XGBClassifier(
+                random_state=42, use_label_encoder=False, eval_metric='logloss',
+                n_estimators=200
+            )
+        
         return models
     
-    def evaluate_model(self, name, model, X_train, X_test, y_train, y_test):
+    def get_param_grids(self):
+        """Return hyper-parameter grids for each model."""
+        grids = {
+            'Random Forest': {
+                'n_estimators': [100, 200, 500],
+                'max_depth': [None, 10, 20, 50],
+                'min_samples_split': [2, 5, 10]
+            },
+            'Extra Trees': {
+                'n_estimators': [100, 200, 500],
+                'max_depth': [None, 10, 20, 50]
+            },
+            'Logistic Regression': {
+                'C': [0.01, 0.1, 1, 10],
+                'solver': ['liblinear']
+            },
+            'SVM (RBF)': {
+                'C': [0.1, 1, 10],
+                'gamma': ['scale', 'auto']
+            },
+            'SVM (Linear)': {
+                'C': [0.1, 1, 10]
+            },
+            'K-Nearest Neighbors': {
+                'n_neighbors': [3, 5, 11, 21],
+                'weights': ['uniform', 'distance']
+            },
+            'Decision Tree': {
+                'max_depth': [None, 5, 10, 20],
+                'min_samples_split': [2, 5, 10]
+            },
+            'MLP Neural Network': {
+                'hidden_layer_sizes': [(50,), (100,), (100, 50), (128, 64)],
+                'alpha': [0.0001, 0.001, 0.01]
+            },
+            'Deep MLP': {
+                'hidden_layer_sizes': [(512, 256, 128), (512, 256, 128, 64), (256, 256, 128)],
+                'alpha': [0.0001, 0.001],
+                'learning_rate_init': [0.001, 0.0005]
+            },
+            'AdaBoost': {
+                'n_estimators': [50, 100, 200],
+                'learning_rate': [0.5, 1.0, 1.5]
+            },
+            'Gradient Boosting': {
+                'n_estimators': [100, 200, 400],
+                'learning_rate': [0.05, 0.1, 0.2],
+                'max_depth': [3, 5, 7]
+            },
+            'Hist Gradient Boosting': {
+                'learning_rate': [0.05, 0.1, 0.2],
+                'max_depth': [None, 10, 20],
+                'max_iter': [100, 200]
+            },
+            'Bagging': {
+                'n_estimators': [10, 50, 100],
+                'max_samples': [0.5, 0.7, 1.0]
+            }
+        }
+        if LGB_AVAILABLE:
+            grids['LightGBM'] = {
+                'n_estimators': [100, 500, 1000],
+                'num_leaves': [31, 63, 127],
+                'learning_rate': [0.01, 0.05, 0.1]
+            }
+        if XGB_AVAILABLE:
+            grids['XGBoost'] = {
+                'n_estimators': [200, 400, 800],
+                'max_depth': [3, 5, 7],
+                'learning_rate': [0.05, 0.1, 0.2],
+                'subsample': [0.7, 1.0]
+            }
+        return grids
+    
+    def evaluate_model(self, name, model, X_train, X_test, y_train, y_test, param_grid=None):
         """Evaluate a single model"""
-        print(f"\nEvaluando {name}...")
+        print(f"\nEvaluando {name}…")
         
         try:
             import signal
@@ -215,16 +291,35 @@ class MLModelEvaluator:
             signal.signal(signal.SIGALRM, timeout_handler)
             signal.alarm(100)
             
-            # Train model
-            print(f"  Entrenando {name}...")
-            model.fit(X_train, y_train)
+            # --------------------------------------------------------------
+            #   Hyper-parameter optimisation (GridSearchCV)
+            # --------------------------------------------------------------
+            if param_grid:
+                print("  ↳ Buscando mejores hiperparámetros… (GridSearchCV)")
+                grid = GridSearchCV(model, param_grid, cv=3, n_jobs=-1,
+                                    scoring='roc_auc', verbose=1)
+                grid.fit(X_train, y_train)
+                model = grid.best_estimator_
+                print(f"     Mejores parámetros: {grid.best_params_}")
+            else:
+                print(f"  Entrenando {name}…")
+                model.fit(X_train, y_train)
             
             # Predictions
             print(f"  Generando predicciones...")
             y_train_pred = model.predict(X_train)
             y_test_pred = model.predict(X_test)
-            y_train_proba = model.predict_proba(X_train)[:, 1]
-            y_test_proba = model.predict_proba(X_test)[:, 1]
+            
+            # Algunas implementaciones no tienen predict_proba
+            if hasattr(model, 'predict_proba'):
+                y_train_proba = model.predict_proba(X_train)[:, 1]
+                y_test_proba = model.predict_proba(X_test)[:, 1]
+            elif hasattr(model, 'decision_function'):
+                y_train_proba = model.decision_function(X_train)
+                y_test_proba = model.decision_function(X_test)
+            else:
+                y_train_proba = y_train_pred
+                y_test_proba = y_test_pred
             
             # Metrics
             results = {
@@ -233,6 +328,8 @@ class MLModelEvaluator:
                 'test_accuracy': accuracy_score(y_test, y_test_pred),
                 'train_auc': roc_auc_score(y_train, y_train_proba),
                 'test_auc': roc_auc_score(y_test, y_test_proba),
+                'train_pr_auc': average_precision_score(y_train, y_train_proba),
+                'test_pr_auc': average_precision_score(y_test, y_test_proba),
             }
             
             # Test set detailed metrics
@@ -255,7 +352,7 @@ class MLModelEvaluator:
             # Cancel timeout
             signal.alarm(0)
             
-            print(f"  Test AUC: {results['test_auc']:.4f}")
+            print(f"  Test AUC: {results['test_auc']:.4f} | PR AUC: {results['test_pr_auc']:.4f}")
             print(f"  Test Accuracy: {results['test_accuracy']:.4f}")
             print(f"  CV AUC: {results['cv_auc_mean']:.4f} ± {results['cv_auc_std']:.4f}")
             
@@ -285,16 +382,17 @@ class MLModelEvaluator:
         
         # Models that benefit from scaling (use PCA reduced data)
         scale_models = ['Logistic Regression', 'SVM (RBF)', 'SVM (Linear)', 
-                      'K-Nearest Neighbors', 'MLP Neural Network']
+                      'K-Nearest Neighbors', 'MLP Neural Network', 'Deep MLP']
         
         # Tree-based models that work better with original high-dimensional data
-        tree_models = ['Random Forest', 'Extra Trees', 'Decision Tree']
+        tree_models = ['Random Forest', 'Extra Trees', 'Decision Tree', 'Gradient Boosting', 'Hist Gradient Boosting', 'Bagging', 'XGBoost' if XGB_AVAILABLE else '']
         
         for name, model in models.items():
             if name in scale_models:
                 # Use scaled PCA data for these models
                 results, trained_model = self.evaluate_model(
-                    name, model, X_train_scaled, X_test_scaled, self.y_train, self.y_test
+                    name, model, X_train_scaled, X_test_scaled, self.y_train, self.y_test,
+                    self.get_param_grids().get(name)
                 )
                 if results is not None:
                     self.results[name] = results
@@ -302,7 +400,8 @@ class MLModelEvaluator:
             elif name in tree_models:
                 # Use original high-dimensional data for tree models
                 results, trained_model = self.evaluate_model(
-                    name, model, self.X_train_orig, self.X_test_orig, self.y_train, self.y_test
+                    name, model, self.X_train_orig, self.X_test_orig, self.y_train, self.y_test,
+                    self.get_param_grids().get(name)
                 )
                 if results is not None:
                     self.results[name] = results
@@ -310,7 +409,8 @@ class MLModelEvaluator:
             else:
                 # Use PCA reduced data for other models
                 results, trained_model = self.evaluate_model(
-                    name, model, self.X_train, self.X_test, self.y_train, self.y_test
+                    name, model, self.X_train, self.X_test, self.y_train, self.y_test,
+                    self.get_param_grids().get(name)
                 )
                 if results is not None:
                     self.results[name] = results
@@ -326,12 +426,12 @@ class MLModelEvaluator:
             print("No hay suficientes modelos para crear ensemble")
             return
         
-        # Get top 5 models by test AUC
+        # Get top 6 models by test PR AUC (better for imbalanced data)
         sorted_models = sorted(self.results.items(), 
-                             key=lambda x: x[1]['test_auc'], reverse=True)
-        top_models = sorted_models[:5]
+                             key=lambda x: x[1]['test_pr_auc'], reverse=True)
+        top_models = sorted_models[:6]
         
-        print("Top 5 modelos para ensemble:")
+        print("Top 6 modelos para ensemble:")
         for name, results in top_models:
             print(f"  {name}: AUC = {results['test_auc']:.4f}")
         
@@ -350,7 +450,8 @@ class MLModelEvaluator:
             hard_voting = VotingClassifier(estimators=estimators, voting='hard')
             results_hard, model_hard = self.evaluate_model(
                 'Ensemble (Hard Voting)', hard_voting, 
-                self.X_train, self.X_test, self.y_train, self.y_test
+                self.X_train, self.X_test, self.y_train, self.y_test,
+                param_grid=None
             )
             
             if results_hard:
@@ -361,7 +462,8 @@ class MLModelEvaluator:
             soft_voting = VotingClassifier(estimators=estimators, voting='soft')
             results_soft, model_soft = self.evaluate_model(
                 'Ensemble (Soft Voting)', soft_voting,
-                self.X_train, self.X_test, self.y_train, self.y_test
+                self.X_train, self.X_test, self.y_train, self.y_test,
+                param_grid=None
             )
             
             if results_soft:
@@ -384,12 +486,12 @@ class MLModelEvaluator:
         models_dir = self.output_dir / 'models'
         models_dir.mkdir(exist_ok=True)
         
-        # Get top 5 models
+        # Get top 6 models
         sorted_models = sorted(self.results.items(), 
-                             key=lambda x: x[1]['test_auc'], reverse=True)
-        top_5 = sorted_models[:5]
+                             key=lambda x: x[1]['test_pr_auc'], reverse=True)
+        top_6 = sorted_models[:6]
         
-        for name, results in top_5:
+        for name, results in top_6:
             model_info = self.best_models[name]
             safe_name = name.replace(' ', '_').replace('(', '').replace(')', '')
             
@@ -418,32 +520,32 @@ class MLModelEvaluator:
         
         # Results DataFrame
         df_results = pd.DataFrame(self.results).T
-        df_results = df_results.sort_values('test_auc', ascending=False)
+        df_results = df_results.sort_values('test_pr_auc', ascending=False)
         
         # Create plots
         fig, axes = plt.subplots(2, 2, figsize=(16, 12))
         
-        # Plot 1: Test AUC comparison
-        axes[0, 0].barh(df_results.index, df_results['test_auc'])
-        axes[0, 0].set_xlabel('Test AUC')
-        axes[0, 0].set_title('Test AUC por Modelo')
+        # Plot 1: Test PR AUC comparison
+        axes[0, 0].barh(df_results.index, df_results['test_pr_auc'])
+        axes[0, 0].set_xlabel('Test PR AUC')
+        axes[0, 0].set_title('Test PR AUC por Modelo')
         axes[0, 0].grid(True, alpha=0.3)
         
-        # Plot 2: Train vs Test AUC
-        axes[0, 1].scatter(df_results['train_auc'], df_results['test_auc'], alpha=0.7)
+        # Plot 2: Train vs Test PR AUC
+        axes[0, 1].scatter(df_results['train_pr_auc'], df_results['test_pr_auc'], alpha=0.7)
         axes[0, 1].plot([0, 1], [0, 1], 'r--', alpha=0.5)
-        axes[0, 1].set_xlabel('Train AUC')
-        axes[0, 1].set_ylabel('Test AUC')
-        axes[0, 1].set_title('Train vs Test AUC')
+        axes[0, 1].set_xlabel('Train PR AUC')
+        axes[0, 1].set_ylabel('Test PR AUC')
+        axes[0, 1].set_title('Train vs Test PR AUC')
         axes[0, 1].grid(True, alpha=0.3)
         
         # Add model names as annotations
         for i, (idx, row) in enumerate(df_results.iterrows()):
-            axes[0, 1].annotate(idx[:10], (row['train_auc'], row['test_auc']), 
+            axes[0, 1].annotate(idx[:10], (row['train_pr_auc'], row['test_pr_auc']), 
                               xytext=(5, 5), textcoords='offset points', fontsize=8)
         
         # Plot 3: Test metrics comparison
-        metrics = ['test_accuracy', 'test_precision', 'test_recall', 'test_f1']
+        metrics = ['test_accuracy', 'test_precision', 'test_recall', 'test_f1', 'test_pr_auc']
         df_metrics = df_results[metrics].head(10)  # Top 10 models
         
         x = np.arange(len(df_metrics.index))
@@ -489,22 +591,22 @@ class MLModelEvaluator:
             print("No hay resultados disponibles")
             return
         
-        # Sort by test AUC
+        # Sort by test PR AUC
         sorted_models = sorted(self.results.items(), 
-                             key=lambda x: x[1]['test_auc'], reverse=True)
+                             key=lambda x: x[1]['test_pr_auc'], reverse=True)
         
-        print(f"{'Rank':<4} {'Modelo':<25} {'Test AUC':<10} {'Test Acc':<10} {'Test F1':<10} {'CV AUC':<15}")
+        print(f"{'Rank':<4} {'Modelo':<25} {'Test PR AUC':<12} {'Test Acc':<10} {'Test F1':<10} {'CV AUC':<15}")
         print("-" * 80)
         
         for i, (name, results) in enumerate(sorted_models, 1):
-            print(f"{i:<4} {name:<25} {results['test_auc']:<10.4f} "
+            print(f"{i:<4} {name:<25} {results['test_pr_auc']:<12.4f} "
                   f"{results['test_accuracy']:<10.4f} {results['test_f1']:<10.4f} "
                   f"{results['cv_auc_mean']:.3f}±{results['cv_auc_std']:.3f}")
         
         # Best model details
         best_name, best_results = sorted_models[0]
         print(f"\n🏆 MEJOR MODELO: {best_name}")
-        print(f"   Test AUC: {best_results['test_auc']:.4f}")
+        print(f"   Test PR AUC: {best_results['test_pr_auc']:.4f}")
         print(f"   Test Accuracy: {best_results['test_accuracy']:.4f}")
         print(f"   Test Precision: {best_results['test_precision']:.4f}")
         print(f"   Test Recall: {best_results['test_recall']:.4f}")
