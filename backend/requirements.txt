@@ -10,3 +10,5 @@ pydantic[email]
 email-validator
 python-multipart
 boto3 
+requests
+numpy
