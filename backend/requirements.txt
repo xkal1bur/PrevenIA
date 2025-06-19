@@ -2,7 +2,7 @@ fastapi
 uvicorn
 sqlalchemy
 psycopg2-binary
-python-jose[crypto]
+python-jose
 passlib[bcrypt]
 pydantic
 dotenv
@@ -10,16 +10,13 @@ pydantic[email]
 email-validator
 python-multipart
 boto3
-# ML and Data Science dependencies
 scikit-learn
 pandas
 numpy
 matplotlib
 seaborn
-# Optional ML libraries (will work without them)
 lightgbm
 xgboost
 tqdm
-# Additional dependencies for sequence processing
 requests
 python-dotenv
