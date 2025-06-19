@@ -22,8 +22,8 @@ export interface ScenarioInfo {
 }
 
 export interface AnalysisSummary {
-  models_predicting_lof: number
-  models_predicting_func: number
+  models_predicting_pathogenic: number
+  models_predicting_benign: number
   average_probability: number
   prediction_agreement: string
 }

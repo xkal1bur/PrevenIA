@@ -58,12 +58,22 @@ import warnings
 warnings.filterwarnings('ignore')
 
 class MLModelEvaluator:
-    def __init__(self, data_path='data.csv', output_dir='ml_results', n_jobs=96):
-        """Create an evaluator for BRCA2 embeddings stored in CSV files.
+    def __init__(self, embeddings_path='final_embeddings.npy', labels_path='labels.npy', output_dir='ml_results', n_jobs=96):
+        """Crea un evaluador usando embeddings y labels almacenados en archivos .npy.
 
-        data.csv must contain the embeddings and a column 'label' (1 = pathogenic, 0 = benign).
+        Parameters
+        ----------
+        embeddings_path : str
+            Ruta al archivo NPY con los embeddings de forma (n_samples, n_features).
+        labels_path : str
+            Ruta al archivo NPY con las etiquetas binarias (n_samples,).
+        output_dir : str
+            Carpeta donde se guardarán los resultados y modelos.
+        n_jobs : int
+            Núcleo/threads para los modelos paralelizables.
         """
-        self.data_path = data_path
+        self.embeddings_path = embeddings_path
+        self.labels_path = labels_path
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(exist_ok=True)
         
@@ -77,42 +87,37 @@ class MLModelEvaluator:
         self.best_models = {}
         
     def load_and_preprocess_data(self):
-        """Load data.csv, split into train/test, create multiple dimensionality reductions."""
+        """Carga embeddings/labels desde NPY, realiza split y reducciones dimensionales."""
         print("="*60)
-        print("CARGANDO Y PREPROCESANDO DATOS")
+        print("CARGANDO Y PREPROCESANDO DATOS (.npy)")
         print("="*60)
 
-        # ------------------------------------------------------------------
-        # 1. Read CSV file
-        # ------------------------------------------------------------------
+        # ---------------------------------------------
+        # 1. Cargar archivos NPY
+        # ---------------------------------------------
         try:
-            df = pd.read_csv(self.data_path)
+            X = np.load(self.embeddings_path)
+            y = np.load(self.labels_path)
         except Exception as e:
-            print(f"❌ No se pudo leer el CSV {self.data_path}: {e}")
+            print(f"❌ No se pudieron cargar los NPY: {e}")
             return False
 
-        print(f"Dataset shape: {df.shape}")
+        if y.ndim > 1:
+            y = y.reshape(-1)
 
-        if 'label' not in df.columns:
-            print("❌ Columna 'label' no encontrada en el CSV.")
+        if X.shape[0] != y.shape[0]:
+            print(f"❌ Inconsistencia: {X.shape[0]} muestras en embeddings y {y.shape[0]} en labels")
             return False
 
-        # ------------------------------------------------------------------
-        # 2. Train/Validation/Test split (70/15/15)
-        # ------------------------------------------------------------------
+        print(f"Shapes → X: {X.shape}, y: {y.shape}")
+
+        # ---------------------------------------------
+        # 2. Train/Test split (85/15) + stratify
+        # ---------------------------------------------
         from sklearn.model_selection import train_test_split
-        train_val_df, test_df = train_test_split(df, test_size=0.15, random_state=42, stratify=df['label'])
-        train_df, val_df = train_test_split(train_val_df, test_size=0.1765, random_state=42, stratify=train_val_df['label'])  # 0.1765*0.85 ~= 0.15
-        train_df = pd.concat([train_df, val_df], ignore_index=True)  # combine for training (CV used later)
-
-        # ------------------------------------------------------------------
-        # 3. Split features/targets
-        # ------------------------------------------------------------------
-        X_train = train_df.drop(columns=['label']).values
-        y_train = train_df['label'].astype(int).values
-
-        X_test = test_df.drop(columns=['label']).values
-        y_test = test_df['label'].astype(int).values
+        X_train, X_test, y_train, y_test = train_test_split(
+            X, y, test_size=0.15, random_state=42, stratify=y
+        )
 
         # Guardar en la instancia para uso posterior (e.g., ensembles)
         self.X_train = X_train
@@ -663,7 +668,10 @@ class MLModelEvaluator:
 
 def main():
     """Main function to run the ML evaluation"""
-    evaluator = MLModelEvaluator()
+    evaluator = MLModelEvaluator(
+        embeddings_path='final_embeddings.npy',
+        labels_path='labels.npy'
+    )
     evaluator.run_complete_pipeline()
 
 
