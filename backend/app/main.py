@@ -1,9 +1,10 @@
 import os
-from fastapi import FastAPI, Depends, HTTPException, status, UploadFile, File, Form, Path
+from fastapi import FastAPI, Depends, HTTPException, status, UploadFile, File, Form, Path, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.orm import Session
 import boto3
+from datetime import datetime, timedelta
 import models, schemas, crud, auth
 from database import SessionLocal, engine
 from fastapi.responses import JSONResponse
@@ -19,6 +20,8 @@ import io
 import pickle
 import zipfile
 import json
+from sqlalchemy import extract, func, distinct
+
 models.Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="API del Prevenia")
@@ -1561,4 +1564,202 @@ async def process_sequence_embedding(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error inesperado: {str(e)}")
 
+@app.get("/pacientes/stats/monthly_new", tags=["Estadísticas"])
+def monthly_new_patients(
+    year: int = Query(..., description="Año a consultar, e.g. 2025"),
+    db: Session = Depends(get_db)
+):
+    """
+    Devuelve una lista de 12 enteros: número de pacientes creados en cada mes
+    del año indicado (enero = índice 0, diciembre = índice 11).
+    """
+    # Consulta agrupada por mes
+    rows = (
+        db.query(
+            extract("month", models.Paciente.created_at).label("mes"),
+            func.count(models.Paciente.id).label("cantidad")
+        )
+        .filter(extract("year", models.Paciente.created_at) == year)
+        .group_by("mes")
+        .order_by("mes")
+        .all()
+    )
 
+    stats = [0] * 12
+    for mes, cantidad in rows:
+        stats[int(mes) - 1] = cantidad
+
+    return {"year": year, "monthly_new": stats}
+
+@app.get("/pacientes/stats/years", tags=["Estadísticas"])
+def available_years(db: Session = Depends(get_db)):
+    """
+    Devuelve la lista de años en los que hay pacientes creados,
+    ordenados ascendentemente.
+    """
+    rows = (
+        db.query(distinct(extract("year", models.Paciente.created_at)))
+          .order_by(extract("year", models.Paciente.created_at))
+          .all()
+    )
+    years = [int(y[0]) for y in rows if y[0] is not None]
+    return {"years": years}
+
+
+@app.get("/pacientes/stats/active_inactive", tags=["Estadísticas"])
+def active_inactive(
+    days: int = Query(30, description="Número de días para considerar actividad"),
+    db: Session = Depends(get_db),
+    current_doc: models.Doctor = Depends(auth.get_current_doctor)
+):
+
+    cutoff = datetime.utcnow() - timedelta(days=days)
+
+    recent_dnis = (
+        db.query(models.Note.patient_dni)
+          .filter(models.Note.timestamp >= cutoff)
+          .distinct()
+          .subquery()
+    )
+
+    total = db.query(models.Paciente).filter(models.Paciente.doctor_id == current_doc.id).count()
+    activos = (
+        db.query(models.Paciente)
+          .filter(
+            models.Paciente.doctor_id == current_doc.id,
+            models.Paciente.dni.in_(recent_dnis)
+          )
+          .count()
+    )
+    inactivos = total - activos
+
+    return {"total": total, "active": activos, "inactive": inactivos}
+
+
+def get_bucket_size_gb(bucket_name: str, region_name: str = "us-east-1") -> float | None:
+    cloudwatch = boto3.client("cloudwatch", region_name=region_name)
+    resp = cloudwatch.get_metric_statistics(
+        Namespace="AWS/S3",
+        MetricName="BucketSizeBytes",
+        Dimensions=[
+            {"Name": "BucketName", "Value": bucket_name},
+            {"Name": "StorageType", "Value": "StandardStorage"},
+        ],
+        StartTime=datetime.utcnow() - timedelta(days=2),
+        EndTime=datetime.utcnow(),
+        Period=86400,  # segundos en un día
+        Statistics=["Average"],
+    )
+    dps = resp.get("Datapoints", [])
+    if not dps:
+        return None
+    # Tomamos el datapoint más reciente
+    latest = max(dps, key=lambda x: x["Timestamp"])
+    size_bytes = latest["Average"]
+    return round(size_bytes / (1024**3), 2)
+
+
+@app.get("/stats/bucket_usage", tags=["Estadísticas"])
+def bucket_usage():
+    bucket = "prevenia-bucket"  # o lee de tus env vars
+    used_gb = get_bucket_size_gb(bucket)
+    if used_gb is None:
+        raise HTTPException(
+            status_code=404, detail="No hay datos de uso en CloudWatch para este bucket"
+        )
+    return {"used_gb": used_gb}
+
+
+
+@app.get("/visualizacion/files", tags=["Visualizacion3D"])
+def list_visualizacion_files():
+
+    prefix = "visualizacion/"
+    try:
+        resp = s3_client.list_objects_v2(Bucket=BUCKET_NAME, Prefix=prefix)
+        items = resp.get("Contents", [])
+        # Filtramos la propia carpeta y devolvemos sólo el nombre del fichero
+        files = [
+            obj["Key"].replace(prefix, "", 1)
+            for obj in items
+            if obj["Key"] != prefix and obj["Key"].endswith(".cif")
+        ]
+        return {"files": files}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error listando archivos: {e}")
+
+@app.get("/visualizacion/{filename}", tags=["Visualizacion3D"])
+def get_visualizacion_file(filename: str):
+    key = f"visualizacion/{filename}"
+    try:
+        obj = s3_client.get_object(Bucket=BUCKET_NAME, Key=key)
+        body = obj["Body"].read()
+        return StreamingResponse(
+            io.BytesIO(body),
+            media_type="chemical/x-cif",
+            headers={"Content-Disposition": f"inline; filename={filename}"}
+        )
+    except s3_client.exceptions.NoSuchKey:
+        raise HTTPException(status_code=404, detail="Archivo no encontrado")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error descargando archivo: {e}")
+    
+### ——— RUTAS PARA CALENDARIO ——— ###
+
+@app.get("/calendario/dia/{fecha}", tags=["Calendario"])
+def list_appointments_by_day(
+    fecha: str,  # “YYYY-MM-DD”
+    current_doc: models.Doctor = Depends(auth.get_current_doctor),
+    db: Session = Depends(get_db)
+):
+    """
+    Devuelve todas las citas (eventos o visitas) de este doctor en la fecha indicada.
+    """
+    try:
+        dt = datetime.fromisoformat(fecha)
+    except ValueError:
+        raise HTTPException(400, "Formato de fecha inválido, use YYYY-MM-DD")
+    start = datetime(dt.year, dt.month, dt.day)
+    end   = start + timedelta(days=1)
+    citas = (
+        db.query(models.Appointment)
+          .filter(
+            models.Appointment.doctor_id == current_doc.id,
+            models.Appointment.fecha_hora >= start,
+            models.Appointment.fecha_hora < end
+          )
+          .all()
+    )
+    return citas
+
+
+@app.post("/calendario/evento", response_model=schemas.AppointmentOut, status_code=201, tags=["Calendario"])
+def create_evento(
+    calendario: schemas.AppointmentCreate,  # { fecha_hora, asunto, lugar, descripcion }
+    db: Session = Depends(get_db),
+    current_doc: models.Doctor = Depends(auth.get_current_doctor)
+):
+    """
+    Crea una nueva nota/recordatorio en el calendario del doctor autenticado.
+    """
+    return crud.create_appointment_for_doctor(db, current_doc.id, calendario)
+
+
+from fastapi import Response
+
+@app.delete("/calendario/{appointment_id}", status_code=204, tags=["Calendario"])
+def delete_appointment(
+    appointment_id: int,
+    db: Session = Depends(get_db),
+    current_doc: models.Doctor = Depends(auth.get_current_doctor)
+):
+    """
+    Borra la cita del doctor autenticado.
+    """
+    appt = crud.get_appointment(db, appointment_id)
+    if not appt:
+        raise HTTPException(status_code=404, detail="Cita no encontrada")
+    if appt.doctor_id != current_doc.id:
+        raise HTTPException(status_code=403, detail="No autorizado")
+    crud.delete_appointment(db, appointment_id)
+    return Response(status_code=204)

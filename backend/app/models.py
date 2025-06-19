@@ -14,7 +14,7 @@ class Doctor(Base):
     clinic_name = Column(String)
 
     pacientes = relationship("Paciente", back_populates="doctor")
-
+    appointments = relationship("Appointment", back_populates="doctor", cascade="all, delete-orphan")
 
 class Paciente(Base):
     __tablename__ = "paciente"
@@ -26,6 +26,7 @@ class Paciente(Base):
     celular   = Column(String)
     correo    = Column(String, unique=True, index=True)
     foto      = Column(String, nullable=True)  
+    created_at   = Column(DateTime, default=datetime.utcnow, nullable=False)  # ← nuevo
 
     doctor_id = Column(Integer, ForeignKey("doctor.id"), nullable=False)
     doctor = relationship("Doctor", back_populates="pacientes")
@@ -41,3 +42,14 @@ class Note(Base):
     timestamp   = Column(DateTime, default=datetime.utcnow, nullable=False)
 
     paciente = relationship("Paciente", back_populates="notes")
+    
+class Appointment(Base):
+    __tablename__ = "appointment"
+    id            = Column(Integer, primary_key=True, index=True)
+    doctor_id     = Column(Integer, ForeignKey("doctor.id"), nullable=False)
+    fecha_hora    = Column(DateTime, nullable=False, index=True)
+    asunto        = Column(String(200), nullable=False)
+    lugar         = Column(String(200), nullable=False)
+    descripcion   = Column(Text, nullable=True)
+    
+    doctor        = relationship("Doctor", back_populates="appointments")
