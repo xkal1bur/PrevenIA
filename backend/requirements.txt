@@ -9,4 +9,18 @@ dotenv
 pydantic[email]
 email-validator
 python-multipart
-boto3 
+boto3
+# ML and Data Science dependencies
+scikit-learn
+pandas
+numpy
+matplotlib
+seaborn
+# Optional ML libraries (will work without them)
+lightgbm
+xgboost
+umap-learn
+tqdm
+# Additional dependencies for sequence processing
+requests
+python-dotenv
