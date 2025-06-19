@@ -119,13 +119,10 @@
 
 .predictions-grid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  grid-template-rows: repeat(2, 1fr);
-  gap: 1.5rem;
-  margin-bottom: 2rem;
-  max-width: 1200px;
-  margin-left: auto;
-  margin-right: auto;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 1.25rem;
+  margin: 0 auto 2rem auto;
+  width: 100%;
 }
 
 .prediction-card {
@@ -222,13 +219,6 @@
 }
 
 /* Responsive design */
-@media (max-width: 1024px) {
-  .predictions-grid {
-    grid-template-columns: repeat(2, 1fr);
-    grid-template-rows: repeat(3, 1fr);
-  }
-}
-
 @media (max-width: 768px) {
   .predictions-panel {
     padding: 1rem;

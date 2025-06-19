@@ -20,9 +20,33 @@ import io
 import pickle
 import zipfile
 import json
-from sqlalchemy import extract, func, distinct
+from sqlalchemy import extract, func, distinct, text, inspect
 
 models.Base.metadata.create_all(bind=engine)
+
+# -----------------------------------------------------------------
+# Garantizar que la columna "created_at" exista en la tabla paciente
+# (puede faltar si la base fue creada antes de añadir la columna al modelo)
+# -----------------------------------------------------------------
+def _ensure_paciente_created_at_column():
+    """Comprueba si la columna paciente.created_at existe; si no, la crea."""
+    with engine.connect() as conn:
+        inspector = inspect(conn)
+        columns = [col["name"] for col in inspector.get_columns("paciente")]
+        if "created_at" not in columns:
+            # Agregar la columna con valor por defecto NOW()
+            conn.execute(text("ALTER TABLE paciente ADD COLUMN created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW();"))
+            # Asignar fecha actual a registros antiguos
+            conn.execute(text("UPDATE paciente SET created_at = NOW() WHERE created_at IS NULL;"))
+            conn.commit()
+            print("✅ Columna paciente.created_at añadida y valores inicializados")
+
+# Ejecutar inmediatamente al importar el módulo
+try:
+    _ensure_paciente_created_at_column()
+except Exception as e:
+    # Solo informar; no queremos impedir que la app arranque
+    print(f"⚠️  No se pudo verificar/crear paciente.created_at: {e}")
 
 app = FastAPI(title="API del Prevenia")
 
@@ -1708,7 +1732,7 @@ def get_visualizacion_file(filename: str):
 
 @app.get("/calendario/dia/{fecha}", tags=["Calendario"])
 def list_appointments_by_day(
-    fecha: str,  # “YYYY-MM-DD”
+    fecha: str,  # "YYYY-MM-DD"
     current_doc: models.Doctor = Depends(auth.get_current_doctor),
     db: Session = Depends(get_db)
 ):

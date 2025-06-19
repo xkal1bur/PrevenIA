@@ -46,7 +46,7 @@ const PredictionsPanel: React.FC<PredictionsPanelProps> = ({ patientDni, patient
   }
 
   const getPredictionColor = (prediction: string): string => {
-    return prediction === 'LOF' ? '#ef4444' : '#10b981'
+    return prediction.toLowerCase() === 'pathogenic' ? '#ef4444' : '#10b981'
   }
 
   const getRiskLevelColor = (riskLevel: string): string => {
@@ -127,12 +127,12 @@ const PredictionsPanel: React.FC<PredictionsPanelProps> = ({ patientDni, patient
               <h4>📊 Resumen del Análisis</h4>
               <div className="summary-grid">
                 <div className="summary-item">
-                  <span className="summary-label">Modelos (LOF):</span>
-                  <span className="summary-value">{predictions.analysis_summary.models_predicting_lof}</span>
+                  <span className="summary-label">Modelos (Patogénica):</span>
+                  <span className="summary-value">{predictions.analysis_summary.models_predicting_pathogenic}</span>
                 </div>
                 <div className="summary-item">
-                  <span className="summary-label">Modelos (FUNC/INT):</span>
-                  <span className="summary-value">{predictions.analysis_summary.models_predicting_func}</span>
+                  <span className="summary-label">Modelos (Benigna):</span>
+                  <span className="summary-value">{predictions.analysis_summary.models_predicting_benign}</span>
                 </div>
                 <div className="summary-item">
                   <span className="summary-label">Probabilidad Promedio:</span>
