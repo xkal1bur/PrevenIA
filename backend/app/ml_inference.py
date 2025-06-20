@@ -40,7 +40,7 @@ class ModelInferenceService:
         #  Cargar embedding por defecto (primera fila de target.csv)
         # ------------------------------------------------------------
         self.default_embedding: Optional[np.ndarray] = self._load_default_embedding()
-        if self.default_embedding is None or self.default_embedding.shape[0] != 8192:
+        if self.default_embedding is None or self.default_embedding.shape[0] != 32768:
             print("[ModelInference] ⚠️ Default embedding could not be loaded or has invalid shape. ML predictions will be disabled.")
 
     def get_predictions_for_patient(self, dni: str, nombres: str, apellidos: str) -> Dict[str, Any]:
@@ -54,16 +54,16 @@ class ModelInferenceService:
         if self.trained_models:
             embedding = self._load_patient_embedding(dni)
 
-            # Validar embedding (debe tener 8192 características)
-            if embedding is None or embedding.shape[0] != 8192:
+            # Validar embedding (debe tener 32768 características)
+            if embedding is None or embedding.shape[0] != 32768:
                 print(f"[ModelInference] ⚠️ Embedding inválido para paciente {dni}. Usando embedding por defecto.")
                 embedding = self.default_embedding
 
-            if embedding is not None and embedding.shape[0] == 8192:
+            if embedding is not None and embedding.shape[0] == 32768:
                 try:
                     predictions = {}
-                    lof_count = 0
-                    func_count = 0
+                    pathogenic_count = 0
+                    benign_count = 0
                     probs_sum = 0.0
 
                     for model_name, objects in self.trained_models.items():
@@ -77,37 +77,37 @@ class ModelInferenceService:
                             except Exception:
                                 pass
 
-                        # Obtener probabilidad de clase positiva (1 = LOF)
+                        # Obtener probabilidad de clase positiva (1 = Pathogenic)
                         if hasattr(model, "predict_proba"):
-                            prob_lof = float(model.predict_proba(X)[0][1])
+                            prob_pathogenic = float(model.predict_proba(X)[0][1])
                         elif hasattr(model, "decision_function"):
                             # Escalar decision_function a [0,1] con sigmoide
-                            prob_lof = float(1 / (1 + math.exp(-model.decision_function(X)[0])))
+                            prob_pathogenic = float(1 / (1 + math.exp(-model.decision_function(X)[0])))
                         else:
                             # Predict devuelve 0/1
-                            prob_lof = float(model.predict(X)[0])
+                            prob_pathogenic = float(model.predict(X)[0])
 
-                        prediction_label = "Pathogenic" if prob_lof >= 0.5 else "Benign"
+                        prediction_label = "Pathogenic" if prob_pathogenic >= 0.5 else "Benign"
                         if prediction_label == "Pathogenic":
-                            lof_count += 1
+                            pathogenic_count += 1
                         else:
-                            func_count += 1
+                            benign_count += 1
 
-                        probs_sum += prob_lof
+                        probs_sum += prob_pathogenic
 
                         # Asignar confianza heurística
-                        if prob_lof >= 0.85 or prob_lof <= 0.15:
+                        if prob_pathogenic >= 0.85 or prob_pathogenic <= 0.15:
                             confidence = "Muy Alta"
-                        elif prob_lof >= 0.70 or prob_lof <= 0.30:
+                        elif prob_pathogenic >= 0.70 or prob_pathogenic <= 0.30:
                             confidence = "Alta"
-                        elif prob_lof >= 0.60 or prob_lof <= 0.40:
+                        elif prob_pathogenic >= 0.60 or prob_pathogenic <= 0.40:
                             confidence = "Media-Alta"
                         else:
                             confidence = "Media"
 
                         predictions[model_name] = {
                             "prediction": prediction_label,
-                            "probability": round(prob_lof, 4),
+                            "probability": round(prob_pathogenic, 4),
                             "confidence": confidence,
                             "description": "Modelo entrenado real",
                             "model_performance": "N/A"
@@ -117,7 +117,7 @@ class ModelInferenceService:
                     avg_probability = probs_sum / total_models if total_models > 0 else 0.0
 
                     # Generar interpretación simple
-                    consensus = "Pathogenic" if lof_count > func_count else "Benign"
+                    consensus = "Pathogenic" if pathogenic_count > benign_count else "Benign"
                     scenario_stub = {
                         "scenario_name": "Predicción basada en modelos reales",
                         "risk_level": "Alto" if consensus == "Pathogenic" else "Bajo",
@@ -125,7 +125,7 @@ class ModelInferenceService:
                         "consensus": consensus,
                     }
 
-                    consensus_confidence = "Alta" if max(lof_count, func_count) >= (0.7 * total_models) else "Media"
+                    consensus_confidence = "Alta" if max(pathogenic_count, benign_count) >= (0.7 * total_models) else "Media"
 
                     return {
                         "status": "success",
@@ -140,10 +140,10 @@ class ModelInferenceService:
                             "consensus_confidence": consensus_confidence
                         },
                         "analysis_summary": {
-                            "models_predicting_pathogenic": lof_count,
-                            "models_predicting_benign": func_count,
+                            "models_predicting_pathogenic": pathogenic_count,
+                            "models_predicting_benign": benign_count,
                             "average_probability": round(avg_probability, 4),
-                            "prediction_agreement": f"{max(lof_count, func_count)}/{total_models} modelos coinciden"
+                            "prediction_agreement": f"{max(pathogenic_count, benign_count)}/{total_models} modelos coinciden"
                         },
                         "clinical_recommendations": [],
                         "predictions": predictions,
@@ -262,8 +262,12 @@ class ModelInferenceService:
                 values = values[:-1]
 
             emb = np.asarray(values, dtype=np.float32)
-            if emb.shape[0] != 8192:
-                print(f"[ModelInference] ⚠️ Dimensión de default embedding inesperada: {emb.shape[0]} (esperado 8192)")
+            # Si la dimensión es 8192, replicar 4× para obtener 32768
+            if emb.shape[0] == 8192:
+                emb = np.tile(emb, 4)
+
+            if emb.shape[0] != 32768:
+                print(f"[ModelInference] ⚠️ Dimensión de default embedding inesperada: {emb.shape[0]} (esperado 32768)")
                 return None
             return emb
         except Exception as e:
