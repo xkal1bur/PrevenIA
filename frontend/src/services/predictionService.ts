@@ -60,5 +60,33 @@ export const predictionService = {
       console.error('Error fetching predictions:', error)
       throw error
     }
+  },
+
+  async processMismatchEmbedding(
+    dni: string,
+    filename: string,
+    token: string
+  ): Promise<Record<string, unknown>> {
+    try {
+      const formData = new FormData()
+      formData.append('filename', filename)
+
+      const response = await fetch(`${API_BASE_URL}/pacientes/${dni}/process_embedding`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`
+        },
+        body: formData
+      })
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`)
+      }
+
+      return await response.json()
+    } catch (error) {
+      console.error('Error processing embeddings:', error)
+      throw error
+    }
   }
 } 

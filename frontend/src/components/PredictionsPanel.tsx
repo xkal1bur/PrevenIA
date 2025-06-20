@@ -6,16 +6,21 @@ import './PredictionsPanel.css'
 interface PredictionsPanelProps {
   patientDni: string
   patientName: string
+  mismatchFiles: string[]
+  onEmbeddingProcessed?: () => void
 }
 
-const PredictionsPanel: React.FC<PredictionsPanelProps> = ({ patientDni, patientName }) => {
+const PredictionsPanel: React.FC<PredictionsPanelProps> = ({ patientDni, patientName, mismatchFiles, onEmbeddingProcessed }) => {
   const [predictions, setPredictions] = useState<PredictionsResponse | null>(null)
   const [loading, setLoading] = useState<boolean>(false)
   const [error, setError] = useState<string | null>(null)
+  const [selectedFile, setSelectedFile] = useState<string>('')
+  const [embeddingStatus, setEmbeddingStatus] = useState<string | null>(null)
 
-  const handleGetPredictions = async () => {
+  const handleProcessAndPredict = async () => {
     setLoading(true)
     setError(null)
+    setEmbeddingStatus(null)
     
     try {
       const token = localStorage.getItem('token')
@@ -23,11 +28,23 @@ const PredictionsPanel: React.FC<PredictionsPanelProps> = ({ patientDni, patient
         throw new Error('No hay token de autenticación')
       }
       
+      // Paso 1: procesar embeddings si se seleccionó un archivo
+      if (!selectedFile) {
+        throw new Error('Selecciona un archivo mismatches_*.fasta')
+      }
+
+      setEmbeddingStatus('⏳ Procesando embeddings...')
+      await predictionService.processMismatchEmbedding(patientDni, selectedFile, token)
+      setEmbeddingStatus('✅ Embeddings generados')
+
+      if (onEmbeddingProcessed) onEmbeddingProcessed()
+
+      // Paso 2: obtener predicciones (asume embeddings ya guardados)
       const data = await predictionService.getPredictionsForPatient(patientDni, token)
       console.log('Predictions data received:', data) // Debug log
       setPredictions(data)
     } catch (err) {
-      setError('Error al obtener las predicciones. Verifica que el servidor esté funcionando.')
+      setError('Error al procesar o al obtener las predicciones. Verifica que el servidor esté funcionando.')
       console.error('Error:', err)
     } finally {
       setLoading(false)
@@ -63,16 +80,34 @@ const PredictionsPanel: React.FC<PredictionsPanelProps> = ({ patientDni, patient
     <div className="predictions-panel">
       <div className="predictions-header">
         <h2>🧬 Predicciones de Variantes Genéticas</h2>
-        <p>Análisis de variantes BRCA1 para {patientName}</p>
+        <p>Análisis de variantes BRCA2 para {patientName}</p>
+      </div>
+
+      {/* Selector de archivo mismatches */}
+      <div className="file-selector" style={{ marginBottom: '1rem' }}>
+        <select
+          value={selectedFile}
+          onChange={e => setSelectedFile(e.target.value)}
+          style={{ padding: '0.5rem', width: '100%' }}
+        >
+          <option value="">Selecciona un archivo mismatches_*.fasta...</option>
+          {mismatchFiles.map(f => (
+            <option key={f} value={f}>{f}</option>
+          ))}
+        </select>
       </div>
 
       <button 
         className="predictions-button"
-        onClick={handleGetPredictions}
-        disabled={loading}
+        onClick={handleProcessAndPredict}
+        disabled={loading || !selectedFile}
       >
-        {loading ? '🔄 Cargando...' : '🚀 Obtener Predicciones'}
+        {loading ? '🔄 Procesando...' : '🚀 Procesar y Predecir'}
       </button>
+
+      {embeddingStatus && (
+        <p style={{ marginTop: '0.5rem' }}>{embeddingStatus}</p>
+      )}
 
       {error && (
         <div className="predictions-error">

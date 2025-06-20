@@ -136,8 +136,6 @@ const Perfil: React.FC = () => {
     )
   }
 
-
-
   /* ---------- Efectos ---------- */
 
   /* 1) Cargar perfil del doctor y datos del paciente */
@@ -177,8 +175,8 @@ const Perfil: React.FC = () => {
       })
   }, [dni, navigate])
 
-  /* 2) Listar archivos S3 */
-  useEffect(() => {
+  /* Función para refrescar la lista de archivos del paciente */
+  const refreshPatientFiles = React.useCallback(() => {
     if (!dni) return
     const hdr = tokenHeader()
     axios
@@ -189,23 +187,26 @@ const Perfil: React.FC = () => {
             lastModified: formatDate(f.lastModified)
           }))
         setFiles(filesWithDate)
-        
-        // Buscar automáticamente archivos alineados si están disponibles
+
+        // Detectar automáticamente archivos alineados disponibles al refrescar
         const hasAlignedChunks = res.data.files.some(f => f.isFolder && f.filename === 'aligned_chunks/' && f.type === 'aligned_sequences')
-        
+
         if (hasAlignedChunks) {
-          // Cargar archivos alineados si están disponibles
-          const alignedFileNames = []
+          const alignedFileNames: string[] = []
           for (let i = 1; i <= 1000; i++) {
             alignedFileNames.push(`${dni}/aligned_chunks/aligned_part_${i.toString().padStart(4, '0')}.fasta`)
           }
           setPatientFiles(alignedFileNames)
           setSequenceLoaded(true)
-          setPatientFilesStatus(`✅ 1000 archivos alineados del paciente encontrados automáticamente`)
         }
       })
       .catch(console.error)
   }, [dni])
+
+  /* 2) Listar archivos S3 (carga inicial) */
+  useEffect(() => {
+    refreshPatientFiles()
+  }, [refreshPatientFiles])
 
   /* 3) Listar notas */
   useEffect(() => {
@@ -615,14 +616,9 @@ const Perfil: React.FC = () => {
 
   /* Abrir modal de procesamiento de embeddings */
   const openEmbeddingModal = () => {
-    // Filtrar archivos FASTA que no sean carpetas (incluir todos los archivos .fasta subidos)
-    const filesForEmbedding = files.filter(f => 
-      !f.isFolder && 
-      (f.filename.toLowerCase().endsWith('.fasta') || 
-       f.filename.toLowerCase().endsWith('.fa') || 
-       f.filename.toLowerCase().endsWith('.fna')) &&
-      !f.filename.includes('patient_part_') &&
-      !f.filename.includes('aligned_part_')
+    // Solo archivos generados por la exportación de mismatches (mismatches_*.fasta)
+    const filesForEmbedding = files.filter(f =>
+      !f.isFolder && f.filename.startsWith('mismatches_') && f.filename.toLowerCase().endsWith('.fasta')
     )
     setAvailableFiles(filesForEmbedding)
     setShowEmbeddingModal(true)
@@ -1033,6 +1029,7 @@ const Perfil: React.FC = () => {
                 totalSequenceLength={patientChunksInfo?.total_length}
                 hasAlignedSequences={patientChunksInfo?.chunk_type === 'aligned_chunks'}
                 blastNavigationInfo={patientChunksInfo?.navigation_info}
+                onUploadSuccess={refreshPatientFiles}
             />
           ) : (
               <div className="dna-placeholder" style={{ 
@@ -1066,6 +1063,8 @@ const Perfil: React.FC = () => {
             <PredictionsPanel
               patientDni={paciente.dni}
               patientName={`${paciente.nombres} ${paciente.apellidos}`}
+              mismatchFiles={files.filter(f => !f.isFolder && f.filename.startsWith('mismatches_') && f.filename.toLowerCase().endsWith('.fasta')).map(f => f.filename)}
+              onEmbeddingProcessed={refreshPatientFiles}
             />
           </div>
         </div>

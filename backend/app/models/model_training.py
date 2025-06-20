@@ -3,13 +3,12 @@ import pandas as pd
 import numpy as np
 import pickle
 import json
-from datetime import datetime
 from pathlib import Path
 
 from sklearn.model_selection import train_test_split, cross_val_score, GridSearchCV
 from sklearn.metrics import (
-    roc_auc_score, accuracy_score, precision_recall_fscore_support,
-    classification_report, confusion_matrix, roc_curve, average_precision_score
+    roc_auc_score, f1_score, precision_recall_fscore_support,
+    average_precision_score
 )
 from sklearn.preprocessing import StandardScaler
 
@@ -19,46 +18,29 @@ from sklearn.ensemble import (
     AdaBoostClassifier, VotingClassifier,
     GradientBoostingClassifier, HistGradientBoostingClassifier, BaggingClassifier
 )
-from sklearn.linear_model import LogisticRegression, RidgeClassifier
 from sklearn.svm import SVC
 from sklearn.neighbors import KNeighborsClassifier
-from sklearn.naive_bayes import GaussianNB
 from sklearn.tree import DecisionTreeClassifier
 from sklearn.neural_network import MLPClassifier
 
 # LightGBM
-try:
-    import lightgbm as lgb
-    LGB_AVAILABLE = True
-except ImportError:
-    print("LightGBM not available")
-    LGB_AVAILABLE = False
-
-# Optional XGBoost
-try:
-    from xgboost import XGBClassifier
-    XGB_AVAILABLE = True
-except ImportError:
-    print("XGBoost not available")
-    XGB_AVAILABLE = False
+import lightgbm as lgb
+from xgboost import XGBClassifier
 
 import matplotlib.pyplot as plt
-import seaborn as sns
 from sklearn.decomposition import PCA
-from sklearn.discriminant_analysis import LinearDiscriminantAnalysis as LDA
+from sklearn.discriminant_analysis import LinearDiscriminantAnalysis as LDA, QuadraticDiscriminantAnalysis
 
-# Progress bar
-try:
-    from tqdm.auto import tqdm
-    TQDM_AVAILABLE = True
-except ImportError:
-    TQDM_AVAILABLE = False
+from tqdm.auto import tqdm
 
 import warnings
 warnings.filterwarnings('ignore')
 
+# GridSearchCV para búsqueda de hiperparámetros
+from sklearn.model_selection import GridSearchCV
+
 class MLModelEvaluator:
-    def __init__(self, embeddings_path='final_embeddings.npy', labels_path='labels.npy', output_dir='ml_results', n_jobs=96):
+    def __init__(self, embeddings_path='final_embeddings.npy', labels_path='labels.npy', output_dir='ml_results', n_jobs=48):
         """Crea un evaluador usando embeddings y labels almacenados en archivos .npy.
 
         Parameters
@@ -78,6 +60,7 @@ class MLModelEvaluator:
         self.output_dir.mkdir(exist_ok=True)
         
         self.n_jobs = n_jobs  # number of parallel threads/cores
+        self.pca_variance = 0.99  # retained variance for PCA (fixed)
         
         self.X_train = None
         self.X_test = None
@@ -85,6 +68,7 @@ class MLModelEvaluator:
         self.y_test = None
         self.results = {}
         self.best_models = {}
+        self.global_scaler = None  # scaler global para normalización
         
     def load_and_preprocess_data(self):
         """Carga embeddings/labels desde NPY, realiza split y reducciones dimensionales."""
@@ -114,7 +98,6 @@ class MLModelEvaluator:
         # ---------------------------------------------
         # 2. Train/Test split (85/15) + stratify
         # ---------------------------------------------
-        from sklearn.model_selection import train_test_split
         X_train, X_test, y_train, y_test = train_test_split(
             X, y, test_size=0.15, random_state=42, stratify=y
         )
@@ -126,36 +109,27 @@ class MLModelEvaluator:
         print(f"Dimensión de características: {X_train.shape[1]}")
 
         # ------------------------------------------------------------------
-        # 4. Limpieza de NaN / Inf
+        # 3. Normalización global
         # ------------------------------------------------------------------
-        for name, arr in [('train', X_train), ('test', X_test)]:
-            nan_mask = np.isnan(arr)
-            inf_mask = np.isinf(arr)
-            if nan_mask.any() or inf_mask.any():
-                print(f"  ↳ {name}: reemplazando {nan_mask.sum()} NaN y {inf_mask.sum()} Inf por 0")
-                arr[nan_mask | inf_mask] = 0
+        scaler_global = StandardScaler()
+        X_train_scaled = scaler_global.fit_transform(X_train)
+        X_test_scaled = scaler_global.transform(X_test)
+
+        # Guardar el scaler global para uso futuro
+        self.global_scaler = scaler_global
 
         # ------------------------------------------------------------------
-        # 5. Dimensionality Reduction techniques
+        # 4. Reducción de dimensionalidad
         # ------------------------------------------------------------------
         reducers = {}
 
-        # Original (no reduction)
-        reducers['Original'] = (X_train, X_test)
+        # Original (ya escalado)
+        reducers['Original'] = (X_train_scaled, X_test_scaled)
 
-        # PCA
-        print("Aplicando PCA (95% varianza)…")
-        pca = PCA(n_components=0.95, random_state=42)
-        reducers['PCA'] = (pca.fit_transform(X_train), pca.transform(X_test))
-
-        # LDA (only if binary classification -> 1 comp)
-        try:
-            lda_components = min(len(np.unique(y_train))-1, 10)
-            if lda_components >= 1:
-                lda = LDA(n_components=lda_components)
-                reducers['LDA'] = (lda.fit_transform(X_train, y_train), lda.transform(X_test))
-        except Exception as e:
-            print(f"LDA failed: {e}")
+        # PCA sobre datos escalados
+        print(f"Aplicando PCA (varianza retenida = {self.pca_variance*100:.1f}% )…")
+        pca = PCA(n_components=self.pca_variance, random_state=42)
+        reducers['PCA'] = (pca.fit_transform(X_train_scaled), pca.transform(X_test_scaled))
 
         self.reducers = reducers  # store for later
 
@@ -178,9 +152,6 @@ class MLModelEvaluator:
             'Extra Trees': ExtraTreesClassifier(
                 n_estimators=100, random_state=42, n_jobs=-1
             ),
-            'Logistic Regression': LogisticRegression(
-                random_state=42, max_iter=10000, solver='liblinear', C=0.1
-            ),
             'SVM (RBF)': SVC(
                 probability=True, random_state=42
             ),
@@ -188,34 +159,31 @@ class MLModelEvaluator:
                 kernel='linear', probability=True, random_state=42
             ),
             'K-Nearest Neighbors': KNeighborsClassifier(n_neighbors=5),
-            'Naive Bayes': GaussianNB(),
             'Decision Tree': DecisionTreeClassifier(random_state=42),
-            'Ridge Classifier': RidgeClassifier(random_state=42),
             'MLP Neural Network': MLPClassifier(
-                hidden_layer_sizes=(100, 50), random_state=42, max_iter=1000
+                hidden_layer_sizes=(512, 256, 128),  # wider shallow network
+                random_state=42, max_iter=3000,
+                solver='adam', early_stopping=True, learning_rate_init=1e-3
             ),
             'Deep MLP': MLPClassifier(
-                hidden_layer_sizes=(512, 256, 128), random_state=42, max_iter=5000,
-                early_stopping=True
+                hidden_layer_sizes=(1024, 512, 256, 128),  # deeper architecture
+                random_state=42, max_iter=5000,
+                solver='adam', early_stopping=True, learning_rate_init=5e-4
             ),
             'AdaBoost': AdaBoostClassifier(random_state=42),
             'Gradient Boosting': GradientBoostingClassifier(random_state=42),
             'Hist Gradient Boosting': HistGradientBoostingClassifier(random_state=42),
-            'Bagging': BaggingClassifier(random_state=42)
-        }
-        
-        # Add LightGBM if available
-        if LGB_AVAILABLE:
-            models['LightGBM'] = lgb.LGBMClassifier(
+            'Bagging': BaggingClassifier(random_state=42),
+            'LDA': LDA(solver='svd'),
+            'QDA (Regularized)': QuadraticDiscriminantAnalysis(reg_param=0.1),
+            'LightGBM': lgb.LGBMClassifier(
                 random_state=42, verbose=-1
-            )
-        
-        # Add XGBoost if available
-        if XGB_AVAILABLE:
-            models['XGBoost'] = XGBClassifier(
+            ),
+            'XGBoost': XGBClassifier(
                 random_state=42, use_label_encoder=False, eval_metric='logloss',
                 n_estimators=200
-            )
+            ),
+        }
         
         return models
     
@@ -230,10 +198,6 @@ class MLModelEvaluator:
             'Extra Trees': {
                 'n_estimators': [100, 200, 500],
                 'max_depth': [None, 10, 20, 50]
-            },
-            'Logistic Regression': {
-                'C': [0.01, 0.1, 1, 10],
-                'solver': ['liblinear']
             },
             'SVM (RBF)': {
                 'C': [0.1, 1, 10],
@@ -255,7 +219,11 @@ class MLModelEvaluator:
                 'alpha': [0.0001, 0.001, 0.01]
             },
             'Deep MLP': {
-                'hidden_layer_sizes': [(512, 256, 128), (512, 256, 128, 64), (256, 256, 128)],
+                'hidden_layer_sizes': [
+                    (1024, 512, 256, 128),
+                    (1024, 512, 256, 128, 64),
+                    (512, 512, 256, 128)
+                ],
                 'alpha': [0.0001, 0.001],
                 'learning_rate_init': [0.001, 0.0005]
             },
@@ -276,21 +244,19 @@ class MLModelEvaluator:
             'Bagging': {
                 'n_estimators': [10, 50, 100],
                 'max_samples': [0.5, 0.7, 1.0]
-            }
-        }
-        if LGB_AVAILABLE:
-            grids['LightGBM'] = {
+            },
+            'LightGBM': {
                 'n_estimators': [100, 500, 1000],
                 'num_leaves': [31, 63, 127],
                 'learning_rate': [0.01, 0.05, 0.1]
-            }
-        if XGB_AVAILABLE:
-            grids['XGBoost'] = {
+            },
+            'XGBoost': {
                 'n_estimators': [200, 400, 800],
                 'max_depth': [3, 5, 7],
                 'learning_rate': [0.05, 0.1, 0.2],
                 'subsample': [0.7, 1.0]
             }
+        }
         return grids
     
     def evaluate_model(self, name, model, X_train, X_test, y_train, y_test, param_grid=None):
@@ -298,22 +264,20 @@ class MLModelEvaluator:
         print(f"\nEvaluando {name}…")
         
         try:
-            import signal
-            
-            def timeout_handler(signum, frame):
-                raise TimeoutError(f"Timeout evaluating {name}")
-            
-            # Set timeout of 300 seconds (5 minutes) per model
-            signal.signal(signal.SIGALRM, timeout_handler)
-            signal.alarm(100)
             
             # --------------------------------------------------------------
-            #   Hyper-parameter optimisation (GridSearchCV)
+            #   Optimización de hiperparámetros (GridSearchCV)
             # --------------------------------------------------------------
             if param_grid:
-                print("  ↳ Buscando mejores hiperparámetros… (GridSearchCV - métrica: PR AUC)")
-                grid = GridSearchCV(model, param_grid, cv=3, n_jobs=-1,
-                                    scoring='average_precision', verbose=1)
+                print("  ↳ Buscando mejores hiperparámetros… (GridSearchCV - PR AUC)")
+                grid = GridSearchCV(
+                    estimator=model,
+                    param_grid=param_grid,
+                    scoring='average_precision',
+                    cv=3,
+                    n_jobs=self.n_jobs,
+                    verbose=1
+                )
                 grid.fit(X_train, y_train)
                 model = grid.best_estimator_
                 print(f"     Mejores parámetros: {grid.best_params_}")
@@ -340,8 +304,8 @@ class MLModelEvaluator:
             # Metrics
             results = {
                 'model_name': name,
-                'train_accuracy': accuracy_score(y_train, y_train_pred),
-                'test_accuracy': accuracy_score(y_test, y_test_pred),
+                'train_f1': f1_score(y_train, y_train_pred),
+                'test_f1': f1_score(y_test, y_test_pred),
                 'train_auc': roc_auc_score(y_train, y_train_proba),
                 'test_auc': roc_auc_score(y_test, y_test_proba),
                 'train_pr_auc': average_precision_score(y_train, y_train_proba),
@@ -365,21 +329,15 @@ class MLModelEvaluator:
             results['cv_auc_mean'] = cv_scores.mean()
             results['cv_auc_std'] = cv_scores.std()
             
-            # Cancel timeout
-            signal.alarm(0)
+            # Fin de evaluación exitosa
             
             print(f"  Test AUC: {results['test_auc']:.4f} | PR AUC: {results['test_pr_auc']:.4f}")
-            print(f"  Test Accuracy: {results['test_accuracy']:.4f}")
+            print(f"  Test F1: {results['test_f1']:.4f}")
             print(f"  CV AUC: {results['cv_auc_mean']:.4f} ± {results['cv_auc_std']:.4f}")
             
             return results, model
             
-        except TimeoutError as e:
-            signal.alarm(0)
-            print(f"  ⏰ Timeout: {name} tardó demasiado, saltando...")
-            return None, None
         except Exception as e:
-            signal.alarm(0)
             print(f"  Error evaluating {name}: {str(e)}")
             return None, None
     
@@ -397,17 +355,8 @@ class MLModelEvaluator:
 
             models = self.get_models()
 
-            # Scale where beneficial
-            scaler = StandardScaler()
-            X_train_scaled = scaler.fit_transform(X_train_red)
-            X_test_scaled = scaler.transform(X_test_red)
-
-            scale_models = ['Logistic Regression', 'SVM (RBF)', 'SVM (Linear)', 
-                            'K-Nearest Neighbors', 'MLP Neural Network', 'Deep MLP']
-
             iterator = models.items()
-            if TQDM_AVAILABLE:
-                iterator = tqdm(iterator, total=len(models), desc=f"Modelos ({red_name})")
+            iterator = tqdm(iterator, total=len(models), desc=f"Modelos ({red_name})")
 
             for name, model in iterator:
                 full_name = f"{red_name} | {name}"
@@ -419,71 +368,59 @@ class MLModelEvaluator:
                     except Exception:
                         pass
 
-                # Evaluate
-                X_tr, X_te = (X_train_scaled, X_test_scaled) if name in scale_models else (X_train_red, X_test_red)
-
+                # Evaluate directamente (datos ya normalizados globalmente)
                 results, trained_model = self.evaluate_model(
-                    full_name, model, X_tr, X_te, self.y_train, self.y_test,
+                    full_name, model, X_train_red, X_test_red, self.y_train, self.y_test,
                     self.get_param_grids().get(name)
                 )
 
-                if results is not None:
-                    self.results[full_name] = results
-                    self.best_models[full_name] = {'model': trained_model, 'scaler': scaler if name in scale_models else None}
+                self.results[full_name] = results
+                self.best_models[full_name] = trained_model
     
     def create_ensemble_models(self):
-        """Create ensemble models from best performers"""
+        """Create ensemble models from the top performers"""
         print("\n" + "="*50)
         print("CREANDO MODELOS ENSEMBLE")
         print("="*50)
-        
-        if len(self.results) < 3:
-            print("No hay suficientes modelos para crear ensemble")
-            return
-        
-        # Get top 6 models by test PR AUC (better for imbalanced data)
-        sorted_models = sorted(self.results.items(), 
-                             key=lambda x: x[1]['test_pr_auc'], reverse=True)
-        top_models = sorted_models[:6]
-        
-        print("Top 6 modelos para ensemble:")
-        for name, results in top_models:
-            print(f"  {name}: AUC = {results['test_auc']:.4f}")
-        
-        # Create voting classifier
+
+        # Select top 5 models evaluated on Original representation
+        sorted_models = sorted(
+            [(n, r) for n, r in self.results.items() if n.startswith('Original |')],
+            key=lambda x: x[1]['test_pr_auc'], reverse=True
+        )
+        top_models = sorted_models[:5]
+
+        print("Modelos seleccionados para el ensemble (Soft Voting):")
         estimators = []
         for name, _ in top_models:
-            model_info = self.best_models[name]
-            if model_info['scaler'] is not None:
-                # For scaled models, we'll need to handle this differently
-                # For simplicity, we'll skip them in ensemble or use them as-is
-                continue
-            estimators.append((name.replace(' ', '_'), model_info['model']))
-        
-        if len(estimators) >= 3:
-            # Hard voting
-            hard_voting = VotingClassifier(estimators=estimators, voting='hard')
-            results_hard, model_hard = self.evaluate_model(
-                'Ensemble (Hard Voting)', hard_voting, 
-                self.X_train, self.X_test, self.y_train, self.y_test,
-                param_grid=None
-            )
-            
-            if results_hard:
-                self.results['Ensemble (Hard Voting)'] = results_hard
-                self.best_models['Ensemble (Hard Voting)'] = {'model': model_hard, 'scaler': None}
-            
-            # Soft voting
-            soft_voting = VotingClassifier(estimators=estimators, voting='soft')
-            results_soft, model_soft = self.evaluate_model(
-                'Ensemble (Soft Voting)', soft_voting,
-                self.X_train, self.X_test, self.y_train, self.y_test,
-                param_grid=None
-            )
-            
-            if results_soft:
-                self.results['Ensemble (Soft Voting)'] = results_soft
-                self.best_models['Ensemble (Soft Voting)'] = {'model': model_soft, 'scaler': None}
+            base_model = self.best_models[name]
+            est_name = name.replace(' | ', '_').replace(' ', '_').lower()
+            estimators.append((est_name, base_model))
+            print(f"  • {name}")
+
+        # Hard Voting ensemble
+        voting_hard = VotingClassifier(estimators=estimators, voting='hard', n_jobs=self.n_jobs)
+        results_hard, model_hard = self.evaluate_model(
+            'Ensemble (Hard Voting)', voting_hard,
+            self.X_train, self.X_test, self.y_train, self.y_test,
+            param_grid=None
+        )
+
+        if results_hard:
+            self.results['Ensemble (Hard Voting)'] = results_hard
+            self.best_models['Ensemble (Hard Voting)'] = model_hard
+
+        # Soft Voting ensemble (requires predict_proba)
+        voting_soft = VotingClassifier(estimators=estimators, voting='soft', n_jobs=self.n_jobs)
+        results_soft, model_soft = self.evaluate_model(
+            'Ensemble (Soft Voting)', voting_soft,
+            self.X_train, self.X_test, self.y_train, self.y_test,
+            param_grid=None
+        )
+
+        if results_soft:
+            self.results['Ensemble (Soft Voting)'] = results_soft
+            self.best_models['Ensemble (Soft Voting)'] = model_soft
     
     def save_results(self):
         """Save results and best models"""
@@ -507,7 +444,7 @@ class MLModelEvaluator:
         top_6 = sorted_models[:6]
         
         for rank, (name, results) in enumerate(top_6, 1):
-            model_info = self.best_models[name]
+            model_obj = self.best_models[name]
 
             # Descomponer el nombre "Representación | Modelo"
             if '|' in name:
@@ -522,15 +459,16 @@ class MLModelEvaluator:
             # Guardar modelo
             model_file = models_dir / f"{filename_base}.pk"
             with open(model_file, 'wb') as f:
-                pickle.dump(model_info['model'], f)
-
-            # Guardar scaler si existe
-            if model_info['scaler'] is not None:
-                scaler_file = models_dir / f"{filename_base}-scaler.pk"
-                with open(scaler_file, 'wb') as f:
-                    pickle.dump(model_info['scaler'], f)
+                pickle.dump(model_obj, f)
 
             print(f"Modelo guardado: {model_file.name} (AUC: {results['test_auc']:.4f})")
+
+        # Guardar scaler global (si existe)
+        if self.global_scaler is not None:
+            scaler_path = models_dir / 'global_scaler.pk'
+            with open(scaler_path, 'wb') as f:
+                pickle.dump(self.global_scaler, f)
+            print(f"Scaler global guardado: {scaler_path.name}")
     
     def create_visualizations(self):
         """Create visualizations of results"""
@@ -569,7 +507,7 @@ class MLModelEvaluator:
                               xytext=(5, 5), textcoords='offset points', fontsize=8)
         
         # Plot 3: Test metrics comparison
-        metrics = ['test_accuracy', 'test_precision', 'test_recall', 'test_f1', 'test_pr_auc']
+        metrics = ['test_f1', 'test_precision', 'test_recall', 'test_pr_auc']
         df_metrics = df_results[metrics].head(10)  # Top 10 models
         
         x = np.arange(len(df_metrics.index))
@@ -619,22 +557,21 @@ class MLModelEvaluator:
         sorted_models = sorted(self.results.items(), 
                              key=lambda x: x[1]['test_pr_auc'], reverse=True)
         
-        print(f"{'Rank':<4} {'Modelo':<25} {'Test PR AUC':<12} {'Test Acc':<10} {'Test F1':<10} {'CV AUC':<15}")
+        print(f"{'Rank':<4} {'Modelo':<25} {'Test PR AUC':<12} {'Test F1':<10} {'Test Prec':<10} {'CV AUC':<15}")
         print("-" * 80)
         
         for i, (name, results) in enumerate(sorted_models, 1):
             print(f"{i:<4} {name:<25} {results['test_pr_auc']:<12.4f} "
-                  f"{results['test_accuracy']:<10.4f} {results['test_f1']:<10.4f} "
+                  f"{results['test_f1']:<10.4f} {results['test_precision']:<10.4f} "
                   f"{results['cv_auc_mean']:.3f}±{results['cv_auc_std']:.3f}")
         
         # Best model details
         best_name, best_results = sorted_models[0]
         print(f"\n🏆 MEJOR MODELO: {best_name}")
         print(f"   Test PR AUC: {best_results['test_pr_auc']:.4f}")
-        print(f"   Test Accuracy: {best_results['test_accuracy']:.4f}")
+        print(f"   Test F1-Score: {best_results['test_f1']:.4f}")
         print(f"   Test Precision: {best_results['test_precision']:.4f}")
         print(f"   Test Recall: {best_results['test_recall']:.4f}")
-        print(f"   Test F1-Score: {best_results['test_f1']:.4f}")
         print(f"   CV AUC: {best_results['cv_auc_mean']:.4f} ± {best_results['cv_auc_std']:.4f}")
     
     def run_complete_pipeline(self):

@@ -29,6 +29,8 @@ interface DNAViewerProps {
     recommended_chunk: number;
     position_in_chunk: number;
   }
+  // Callback para notificar al padre cuando se sube un FASTA con mismatches
+  onUploadSuccess?: () => void;
 }
 
 interface SequenceChunk {
@@ -53,7 +55,8 @@ const DNAViewer: React.FC<DNAViewerProps> = ({
   patientChunkNumber,
   totalSequenceLength,
   hasAlignedSequences = false,
-  blastNavigationInfo
+  blastNavigationInfo,
+  onUploadSuccess
 }) => {
   const [referenceSequence, setReferenceSequence] = useState<string>(initialSeq1)
   const [viewStart, setViewStart] = useState<number>(0)
@@ -473,27 +476,62 @@ const DNAViewer: React.FC<DNAViewerProps> = ({
     setViewStart(newViewStart)
   }
 
-  // Función para exportar FASTA (simplificada)
-  const downloadFastaFile = useCallback(() => {
-    if (!currentChunk || !patientChunk) return
+  // Función para exportar FASTA con ventanas de 129 bp alrededor de cada mismatch
+  const uploadMismatchFasta = useCallback(async () => {
+    if (!currentChunk || result1.length === 0 || !patientDni) {
+      alert('No hay datos suficientes para exportar')
+      return
+    }
+
+    // Solo los realmente coloreados como 'mismatch' (rojo)
+    const mismatches = result1.filter(item => !item.isMatch && !item.isPatientGap && item.char !== '-')
+
+    if (mismatches.length === 0) {
+      alert('✅ No se encontraron diferencias en el fragmento actual')
+      return
+    }
 
     let fastaContent = ''
-    fastaContent += `>${title1.replace(/\s+/g, '_')}|Chunk_${currentChunk.startPosition + 1}-${currentChunk.endPosition + 1}\n`
-    fastaContent += currentChunk.data + '\n\n'
-    fastaContent += `>${title2.replace(/\s+/g, '_')}|Chunk_${patientChunk.startPosition + 1}-${patientChunk.endPosition + 1}\n`
-    fastaContent += patientChunk.data + '\n'
 
-    const blob = new Blob([fastaContent], { type: 'text/plain' })
-    const url = URL.createObjectURL(blob)
-    
-    const link = document.createElement('a')
-    link.href = url
-    link.download = `chunk_${currentChunk.startPosition + 1}-${currentChunk.endPosition + 1}_${new Date().toISOString().split('T')[0]}.fasta`
-    document.body.appendChild(link)
-    link.click()
-    document.body.removeChild(link)
-    URL.revokeObjectURL(url)
-  }, [currentChunk, patientChunk, title1, title2])
+    for (let i = 0; i < mismatches.length; i++) {
+      const { index: globalPos } = mismatches[i]
+
+      // Calcular ventana (64 antes y 64 después)
+      const windowStart = Math.max(0, globalPos - 64)
+      const windowEnd   = Math.min(totalLength - 1, globalPos + 64)
+      const windowSize  = windowEnd - windowStart + 1
+
+      // Obtener subsecuencia de referencia usando la función ya optimizada
+      const refSubSeqChunk = await getReferenceChunk(windowStart, windowSize)
+
+      // Añadir entrada al FASTA
+      fastaContent += `>Mismatch_${i + 1}_pos_${globalPos + 1}_window_${windowStart + 1}-${windowEnd + 1}\n`
+      fastaContent += refSubSeqChunk.data + '\n'
+    }
+
+    try {
+      const blob = new Blob([fastaContent], { type: 'text/plain' })
+      const fileName = `mismatches_${currentChunk.startPosition + 1}-${currentChunk.endPosition + 1}_${new Date().toISOString().replace(/[:T.]/g, '-').split('Z')[0]}.fasta`
+
+      const formData = new FormData()
+      formData.append('fasta_file', new File([blob], fileName, { type: 'text/plain' }))
+
+      // Enviar al backend para que lo suba a S3
+      const headers = {
+        Authorization: `Bearer ${localStorage.getItem('token') || ''}`
+      }
+
+      await axios.post(`http://localhost:8000/pacientes/${patientDni}/upload_fasta`, formData, { headers })
+
+      alert(`✅ FASTA con mismatches subido a S3 como ${fileName}`)
+
+      // Notificar al componente padre para refrescar la lista de archivos
+      if (onUploadSuccess) onUploadSuccess()
+    } catch (err) {
+      console.error('Error subiendo mismatches:', err)
+      alert('❌ Error al subir el archivo a S3')
+    }
+  }, [currentChunk, result1, totalLength, getReferenceChunk, patientDni, onUploadSuccess])
 
   // Validación
   if (totalLength === 0) {
@@ -534,8 +572,8 @@ const DNAViewer: React.FC<DNAViewerProps> = ({
         </div>
         <div className="zoom-controls">
           {allowExport && (
-            <button onClick={downloadFastaFile} className="control-btn fasta-export" title="Exportar chunk actual como FASTA" disabled={!currentChunk}>
-              📄 Exportar Chunk
+            <button onClick={uploadMismatchFasta} className="control-btn fasta-export" title="Exportar regiones de mismatch (129 bp)" disabled={!currentChunk}>
+              📄 Exportar Mismatches
             </button>
           )}
         </div>

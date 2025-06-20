@@ -6,7 +6,7 @@
   "description": "cr13.fasta",
   "number-of-letters": 114364328,
   "number-of-sequences": 1,
-  "last-updated": "2025-06-18T11:17:00",
+  "last-updated": "2025-06-25T11:00:00",
   "number-of-volumes": 1,
   "bytes-total": 28660391,
   "bytes-to-cache": 28623368,
