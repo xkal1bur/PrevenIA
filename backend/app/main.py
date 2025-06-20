@@ -21,6 +21,7 @@ import pickle
 import zipfile
 import json
 from sqlalchemy import extract, func, distinct, text, inspect
+from fastapi import Response
 
 models.Base.metadata.create_all(bind=engine)
 
@@ -327,6 +328,37 @@ def extract_sequence_from_fasta(fasta_content: str) -> str:
             sequence_lines.append(clean_line)
     
     return ''.join(sequence_lines)
+
+# ------------------------------------------------------------
+# NUEVO: extraer múltiples secuencias de un FASTA (por ejemplo, mismatch_*.fasta)
+# ------------------------------------------------------------
+
+def extract_sequences_from_multi_fasta(fasta_content: str) -> list[str]:
+    """Devuelve una lista con cada secuencia presente en un FASTA multi-entrada."""
+    sequences: list[str] = []
+    current: list[str] = []
+
+    for line in fasta_content.split('\n'):
+        line = line.strip()
+        if not line:
+            continue
+
+        if line.startswith('>'):
+            # Guardar la secuencia previa (si existe)
+            if current:
+                sequences.append(''.join(current))
+                current = []
+            continue  # Omitir la línea del header
+
+        # Limpiar la línea y añadirla a la secuencia actual
+        clean_line = ''.join(c.upper() for c in line if c.upper() in 'ATCGN-')
+        current.append(clean_line)
+
+    # Añadir la última secuencia si quedó algo
+    if current:
+        sequences.append(''.join(current))
+
+    return sequences
 
 import subprocess
 import tempfile
@@ -1464,92 +1496,77 @@ async def process_sequence_embedding(
         except s3_client.exceptions.NoSuchKey:
             raise HTTPException(status_code=404, detail="Archivo del paciente no encontrado")
         
-        # Extraer la secuencia del archivo FASTA
-        sequence = extract_sequence_from_fasta(patient_content)
+        # Detectar si el archivo contiene múltiples entradas FASTA (mismatches_*.fasta)
+        sequences: list[str]
+        if filename.startswith("mismatches_") or patient_content.count('>') > 1:
+            sequences = extract_sequences_from_multi_fasta(patient_content)
+        else:
+            single_seq = extract_sequence_from_fasta(patient_content)
+            sequences = [single_seq] if single_seq else []
+
+        if not sequences:
+            raise HTTPException(status_code=400, detail="No se pudo extraer ninguna secuencia válida del archivo FASTA")
         
-        if not sequence:
-            raise HTTPException(status_code=400, detail="No se pudo extraer una secuencia válida del archivo FASTA")
-        
-        # Procesar con la API de NVIDIA NIM
+        # Procesar cada secuencia con la API de NVIDIA NIM y acumular embeddings
+        tensors: list[np.ndarray] = []
+
         API_URL = "https://health.api.nvidia.com/v1/biology/arc/evo2-40b/forward"
         
         try:
-            response = requests.post(
-                url=API_URL,
-                headers={"Authorization": f"Bearer {NIM_KEY}"},
-                json={
-                    "sequence": sequence,
-                    "output_layers": ["blocks.24.inner_mha_cls"]
-                },
-                timeout=300  # Aumentar timeout a 5 minutos
-            )
-            response.raise_for_status()
-            
-            # Procesar la respuesta según el content-type
-            content_type = response.headers.get('content-type', '')
-            
-            if 'application/zip' in content_type:
-                # Procesar respuesta ZIP
-                zip_data = io.BytesIO(response.content)
-                
-                with zipfile.ZipFile(zip_data, 'r') as zip_file:
-                    # Obtener el primer archivo (debería ser el .response)
-                    response_file = zip_file.namelist()[0]
-                    
-                    with zip_file.open(response_file) as file:
-                        file_content = file.read().decode('utf-8')
-                        
-                    # Parsear el JSON dentro del archivo .response
-                    rj = json.loads(file_content)
-                    
-            elif 'application/json' in content_type:
-                # Procesar respuesta JSON directa
-                rj = response.json()
-                
-            else:
-                raise HTTPException(
-                    status_code=500,
-                    detail=f"Content-Type no soportado: {content_type}"
+            for seq in sequences:
+                response = requests.post(
+                    url=API_URL,
+                    headers={"Authorization": f"Bearer {NIM_KEY}"},
+                    json={
+                        "sequence": seq,
+                        "output_layers": ["blocks.24.inner_mha_cls"]
+                    },
+                    timeout=300  # 5 min por secuencia
                 )
-            
-            # Extraer tensor de la respuesta JSON
-            if 'data' not in rj:
-                raise HTTPException(
-                    status_code=500,
-                    detail="Campo 'data' no encontrado en la respuesta de la API"
-                )
-                
-            tensor_data = base64.b64decode(rj['data'])
-            tensor_dict = np.load(io.BytesIO(tensor_data))
-            
-            if 'blocks.24.inner_mha_cls.output' not in tensor_dict:
-                raise HTTPException(
-                    status_code=500,
-                    detail=f"Clave 'blocks.24.inner_mha_cls.output' no encontrada. Claves disponibles: {list(tensor_dict.keys())}"
-                )
-                
-            tensor = tensor_dict['blocks.24.inner_mha_cls.output']
-            
+                response.raise_for_status()
+
+                content_type = response.headers.get('content-type', '')
+                if 'application/zip' in content_type:
+                    zip_data = io.BytesIO(response.content)
+                    with zipfile.ZipFile(zip_data, 'r') as zip_file:
+                        response_file = zip_file.namelist()[0]
+                        with zip_file.open(response_file) as file:
+                            rj = json.loads(file.read().decode('utf-8'))
+                elif 'application/json' in content_type:
+                    rj = response.json()
+                else:
+                    raise HTTPException(500, f"Content-Type no soportado: {content_type}")
+
+                if 'data' not in rj:
+                    raise HTTPException(500, "Campo 'data' no encontrado en la respuesta de la API")
+
+                tensor_data = base64.b64decode(rj['data'])
+                tensor_dict = np.load(io.BytesIO(tensor_data))
+                if 'blocks.24.inner_mha_cls.output' not in tensor_dict:
+                    raise HTTPException(500, "Clave de embedding no encontrada en la respuesta")
+
+                tensors.append(tensor_dict['blocks.24.inner_mha_cls.output'])
+
         except requests.exceptions.RequestException as e:
-            raise HTTPException(
-                status_code=500, 
-                detail=f"Error al procesar con la API de NVIDIA NIM: {str(e)}"
-            )
-        except json.JSONDecodeError as e:
-            raise HTTPException(
-                status_code=500,
-                detail=f"Error parseando JSON de la respuesta: {str(e)}"
-            )
+            raise HTTPException(500, f"Error al procesar con la API de NVIDIA NIM: {str(e)}")
         except Exception as e:
-            raise HTTPException(
-                status_code=500, 
-                detail=f"Error procesando la respuesta de la API: {str(e)}"
-            )
-        
+            raise HTTPException(500, f"Error procesando la respuesta de la API: {str(e)}")
+
+        if not tensors:
+            raise HTTPException(500, "No se pudo obtener embeddings de la API")
+
+        # Asegurar que todas las formas coinciden antes de hacer promedio
+        try:
+            stacked = np.stack(tensors, axis=0)
+        except ValueError:
+            raise HTTPException(500, "Los embeddings recibidos tienen formas incompatibles")
+
+        avg_tensor = np.mean(stacked, axis=0)
+
         # Guardar el embedding en S3 como archivo pickle
         try:
             # Serializar el tensor numpy
-            embedding_data = pickle.dumps(tensor)
+            embedding_data = pickle.dumps(avg_tensor)
             
             # Crear nombre del archivo de embedding
             base_filename = filename.rsplit('.', 1)[0]  # Quitar extensión
@@ -1571,8 +1588,8 @@ async def process_sequence_embedding(
                     "original_file": filename,
                     "embedding_file": embedding_filename,
                     "embedding_key": embedding_key,
-                    "sequence_length": len(sequence),
-                    "embedding_shape": list(tensor.shape),
+                    "sequence_count": len(sequences),
+                    "avg_embedding_shape": list(avg_tensor.shape),
                     "api_used": "NVIDIA NIM EVO-2 40B"
                 }
             )
@@ -1769,7 +1786,6 @@ def create_evento(
     return crud.create_appointment_for_doctor(db, current_doc.id, calendario)
 
 
-from fastapi import Response
 
 @app.delete("/calendario/{appointment_id}", status_code=204, tags=["Calendario"])
 def delete_appointment(
