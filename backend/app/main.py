@@ -22,6 +22,9 @@ import zipfile
 import json
 from sqlalchemy import extract, func, distinct, text, inspect
 from fastapi import Response
+import asyncio
+import concurrent.futures
+from functools import partial
 
 models.Base.metadata.create_all(bind=engine)
 
@@ -329,10 +332,6 @@ def extract_sequence_from_fasta(fasta_content: str) -> str:
     
     return ''.join(sequence_lines)
 
-# ------------------------------------------------------------
-# NUEVO: extraer múltiples secuencias de un FASTA (por ejemplo, mismatch_*.fasta)
-# ------------------------------------------------------------
-
 def extract_sequences_from_multi_fasta(fasta_content: str) -> list[str]:
     """Devuelve una lista con cada secuencia presente en un FASTA multi-entrada."""
     sequences: list[str] = []
@@ -398,58 +397,124 @@ async def upload_fasta(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error subiendo archivo: {e}")
 
+async def upload_chunk_to_s3(s3_client, bucket_name: str, key: str, body: str):
+    """Función auxiliar para subir un chunk a S3 de forma asíncrona"""
+    loop = asyncio.get_event_loop()
+    
+    # Ejecutar la operación S3 en un thread pool para no bloquear el event loop
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+        await loop.run_in_executor(
+            executor,
+            partial(
+                s3_client.put_object,
+                Bucket=bucket_name,
+                Key=key,
+                Body=body.encode('utf-8'),
+                ContentType="text/plain"
+            )
+        )
+
+async def upload_chunks_parallel(s3_client, bucket_name: str, patient_folder: str, sequence: str, chunk_count: int = 1000):
+    """Sube chunks a S3 en paralelo para acelerar el proceso"""
+    
+    # Dividir la secuencia en chunks
+    sequence_length = len(sequence)
+    chunk_size = sequence_length // chunk_count
+    remainder = sequence_length % chunk_count
+    
+    # Crear todas las tareas de subida
+    upload_tasks = []
+    
+    for i in range(chunk_count):
+        start_pos = i * chunk_size
+        # Distribuir el remainder entre las primeras partes
+        if i < remainder:
+            start_pos += i
+            end_pos = start_pos + chunk_size + 1
+        else:
+            start_pos += remainder
+            end_pos = start_pos + chunk_size
+        
+        chunk_sequence = sequence[start_pos:end_pos]
+        chunk_filename = f"patient_part_{i+1:04d}.fasta"  # 0001, 0002, ..., 1000
+        chunk_key = f"{patient_folder}{chunk_filename}"
+        
+        # Crear tarea asíncrona para subir este chunk
+        task = upload_chunk_to_s3(s3_client, bucket_name, chunk_key, chunk_sequence)
+        upload_tasks.append(task)
+    
+    # Ejecutar todas las subidas en paralelo con un límite de concurrencia
+    # Procesar en lotes para no sobrecargar S3
+    batch_size = 50  # Subir máximo 50 archivos concurrentemente
+    
+    for i in range(0, len(upload_tasks), batch_size):
+        batch = upload_tasks[i:i + batch_size]
+        await asyncio.gather(*batch)
+        
+        # Pequeña pausa entre lotes para ser amigable con S3
+        if i + batch_size < len(upload_tasks):
+            await asyncio.sleep(0.1)
+
 async def process_patient_file_with_blast(dni: str, filename: str, contents: bytes, fasta_text: str):
-    """Procesa un archivo de paciente usando BLAST para alineamiento con cromosoma 13"""
+    """Procesa archivo de paciente con BLAST y lo divide en 1000 partes"""
     
-    # Crear archivo temporal para la consulta (paciente)
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.fasta', delete=False) as query_temp:
-        query_temp.write(fasta_text)
-        query_temp_path = query_temp.name
+    # Extraer secuencia del FASTA
+    sequences = extract_sequences_from_multi_fasta(fasta_text)
+    if not sequences:
+        raise HTTPException(status_code=400, detail="No se encontraron secuencias válidas en el archivo FASTA")
     
-    # Crear archivo temporal para los resultados de BLAST
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.tsv', delete=False) as results_temp:
-        results_temp_path = results_temp.name
+    # Usar la primera secuencia encontrada
+    query_seq = sequences[0].replace('\n', '').replace('\r', '').upper()
+    query_seq_clean = ''.join(c for c in query_seq if c in 'ATCGN-')
+    
+    # Crear archivo temporal para BLAST
+    import tempfile
+    import uuid
+    import subprocess
+    
+    query_temp_path = f"/tmp/query_{uuid.uuid4().hex}.fasta"
+    results_temp_path = f"/tmp/blast_results_{uuid.uuid4().hex}.tsv"
     
     try:
+        # Escribir secuencia query en formato FASTA
+        with open(query_temp_path, 'w') as f:
+            f.write(f">query\n{query_seq_clean}\n")
+        
         # Ejecutar BLAST
-        result = subprocess.run([
-            'blastn',
-            '-query', query_temp_path,
-            '-db', 'blast_db/chr13_db',
-            '-outfmt', '6 qseqid sseqid pident length qstart qend sstart send evalue qseq',
-            '-out', results_temp_path,
-            '-max_target_seqs', '1',  # Solo el mejor hit
-            '-evalue', '1e-5'
-        ], capture_output=True, text=True, timeout=300)
+        blast_cmd = [
+            "blastn",
+            "-query", query_temp_path,
+            "-db", "app/blast_db/chr13_db",
+            "-out", results_temp_path,
+            "-outfmt", "6 qseqid sseqid pident length mismatch gapopen qstart qend sstart send evalue bitscore",
+            "-max_target_seqs", "1",
+            "-evalue", "1e-5"
+        ]
         
+        result = subprocess.run(blast_cmd, capture_output=True, text=True)
         if result.returncode != 0:
-            raise HTTPException(status_code=500, detail=f"Error en BLAST: {result.stderr}")
+            raise HTTPException(status_code=500, detail=f"Error ejecutando BLAST: {result.stderr}")
         
-        # Leer los resultados de BLAST
+        # Leer resultados de BLAST
         with open(results_temp_path, 'r') as f:
             blast_results = f.read().strip()
         
         if not blast_results:
-            raise HTTPException(status_code=400, detail="No se encontraron alineamientos significativos")
+            raise HTTPException(status_code=400, detail="No se encontraron alineamientos significativos con BLAST")
         
-        # Parsear el primer resultado (mejor hit)
-        blast_line = blast_results.split('\n')[0]
-        fields = blast_line.split('\t')
+        # Parsear la primera línea de resultados (mejor hit)
+        blast_fields = blast_results.split('\n')[0].split('\t')
+        qseqid, sseqid, pident, length, mismatch, gapopen, qstart, qend, sstart, send, evalue, bitscore = blast_fields
         
-        if len(fields) < 10:
-            raise HTTPException(status_code=500, detail="Formato de resultado BLAST inválido")
+        # Obtener la secuencia de referencia cr13
+        cr13_seq = get_cr13_sequence()
+        if not cr13_seq:
+            raise HTTPException(status_code=500, detail="No se pudo cargar la secuencia de referencia cr13")
         
-        qseqid, sseqid, pident, length, qstart, qend, sstart, send, evalue, qseq = fields
-        
-        # Obtener la secuencia de referencia completa (optimizada con cache)
-        ref_sequence = get_cr13_sequence()
-        aligned_length = len(ref_sequence)
-        
-        # Calcular posición de inicio (BLAST usa 1-based, Python 0-based)
-        ref_start = int(sstart) - 1
-        
-        # Limpiar la secuencia query de gaps y crear secuencia alineada
-        query_seq_clean = qseq.replace('-', '')
+        # Calcular posición y longitud del alineamiento
+        ref_start = int(sstart) - 1  # Convertir a índice base-0
+        ref_end = int(send)
+        aligned_length = len(cr13_seq)
         
         # Crear secuencia alineada de forma más eficiente
         patient_aligned_str = (
@@ -458,65 +523,32 @@ async def process_patient_file_with_blast(dni: str, filename: str, contents: byt
             '-' * max(0, aligned_length - ref_start - len(query_seq_clean))
         )
         
-        # Dividir la secuencia alineada en 1000 partes iguales
-        sequence_length = len(patient_aligned_str)
-        chunk_size = sequence_length // 1000
-        remainder = sequence_length % 1000
-        
         # Crear carpeta para las partes del paciente
         patient_folder = f"{dni}/patient_chunks/"
         
-        # Subir cada parte a S3
-        for i in range(1000):
-            start_pos = i * chunk_size
-            # Distribuir el remainder entre las primeras partes
-            if i < remainder:
-                start_pos += i
-                end_pos = start_pos + chunk_size + 1
-            else:
-                start_pos += remainder
-                end_pos = start_pos + chunk_size
-            
-            chunk_sequence = patient_aligned_str[start_pos:end_pos]
-            
-            # Crear nombre del archivo para esta parte
-            chunk_filename = f"patient_part_{i+1:04d}.fasta"  # 0001, 0002, ..., 1000
-            chunk_key = f"{patient_folder}{chunk_filename}"
-            
-            # Subir la parte a S3 (solo la secuencia, sin header)
-            s3_client.put_object(
-                Bucket=BUCKET_NAME,
-                Key=chunk_key,
-                Body=chunk_sequence.encode('utf-8'),
-                ContentType="text/plain"
-            )
+        # Subir chunks en paralelo - OPTIMIZACIÓN PRINCIPAL
+        await upload_chunks_parallel(s3_client, BUCKET_NAME, patient_folder, patient_aligned_str)
         
-        # También subir el archivo original para referencia
+        # Subir archivos adicionales en paralelo también
+        additional_uploads = []
+        
+        # Archivo original
         original_key = f"{dni}/{filename}"
-        s3_client.put_object(
-            Bucket=BUCKET_NAME,
-            Key=original_key,
-            Body=contents,
-            ContentType="application/octet-stream"
-        )
+        original_task = upload_chunk_to_s3(s3_client, BUCKET_NAME, original_key, contents.decode('utf-8'))
+        additional_uploads.append(original_task)
         
-        # Subir la secuencia alineada completa
+        # Secuencia alineada completa
         aligned_key = f"{dni}/aligned_{filename}"
-        s3_client.put_object(
-            Bucket=BUCKET_NAME,
-            Key=aligned_key,
-            Body=patient_aligned_str.encode('utf-8'),
-            ContentType="text/plain"
-        )
+        aligned_task = upload_chunk_to_s3(s3_client, BUCKET_NAME, aligned_key, patient_aligned_str)
+        additional_uploads.append(aligned_task)
         
-        # Subir los resultados de BLAST
+        # Resultados de BLAST
         blast_results_key = f"{dni}/blast_results_{filename}.tsv"
-        s3_client.put_object(
-            Bucket=BUCKET_NAME,
-            Key=blast_results_key,
-            Body=blast_results.encode('utf-8'),
-            ContentType="text/plain"
-        )
+        blast_task = upload_chunk_to_s3(s3_client, BUCKET_NAME, blast_results_key, blast_results)
+        additional_uploads.append(blast_task)
+        
+        # Ejecutar subidas adicionales en paralelo
+        await asyncio.gather(*additional_uploads)
         
         return JSONResponse(
             status_code=200, 
@@ -526,7 +558,7 @@ async def process_patient_file_with_blast(dni: str, filename: str, contents: byt
                 "aligned_key": aligned_key,
                 "blast_results_key": blast_results_key,
                 "chunks_folder": patient_folder,
-                "sequence_length": sequence_length,
+                "sequence_length": len(patient_aligned_str),
                 "chunks_created": 1000,
                 "blast_stats": {
                     "percent_identity": float(pident),
@@ -550,7 +582,7 @@ async def process_patient_file_with_blast(dni: str, filename: str, contents: byt
             pass
 
 async def process_normal_fasta(dni: str, filename: str, contents: bytes, fasta_text: str):
-    """Procesa un archivo FASTA normal dividiéndolo en 100 partes iguales"""
+    """Procesa un archivo FASTA normal dividiéndolo en 1000 partes iguales"""
     
     # Extraer la secuencia sin headers
     sequence = extract_sequence_from_fasta(fasta_text)
@@ -558,47 +590,15 @@ async def process_normal_fasta(dni: str, filename: str, contents: bytes, fasta_t
     if not sequence:
         raise HTTPException(status_code=400, detail="No se encontró secuencia válida en el archivo FASTA")
     
-    # Dividir la secuencia en 1000 partes iguales
-    sequence_length = len(sequence)
-    chunk_size = sequence_length // 1000
-    remainder = sequence_length % 1000
-    
     # Crear carpeta para las partes del paciente
     patient_folder = f"{dni}/patient_chunks/"
     
-    # Subir cada parte a S3
-    for i in range(1000):
-        start_pos = i * chunk_size
-        # Distribuir el remainder entre las primeras partes
-        if i < remainder:
-            start_pos += i
-            end_pos = start_pos + chunk_size + 1
-        else:
-            start_pos += remainder
-            end_pos = start_pos + chunk_size
-        
-        chunk_sequence = sequence[start_pos:end_pos]
-        
-        # Crear nombre del archivo para esta parte
-        chunk_filename = f"patient_part_{i+1:04d}.fasta"  # 0001, 0002, ..., 1000
-        chunk_key = f"{patient_folder}{chunk_filename}"
-        
-        # Subir la parte a S3 (solo la secuencia, sin header)
-        s3_client.put_object(
-            Bucket=BUCKET_NAME,
-            Key=chunk_key,
-            Body=chunk_sequence.encode('utf-8'),
-            ContentType="text/plain"
-        )
+    # Subir chunks en paralelo - OPTIMIZACIÓN PRINCIPAL
+    await upload_chunks_parallel(s3_client, BUCKET_NAME, patient_folder, sequence)
     
-    # También subir el archivo original para referencia
+    # Subir archivo original
     original_key = f"{dni}/{filename}"
-    s3_client.put_object(
-        Bucket=BUCKET_NAME,
-        Key=original_key,
-        Body=contents,
-        ContentType="application/octet-stream"
-    )
+    await upload_chunk_to_s3(s3_client, BUCKET_NAME, original_key, contents.decode('utf-8'))
     
     return JSONResponse(
         status_code=200, 
@@ -606,7 +606,7 @@ async def process_normal_fasta(dni: str, filename: str, contents: bytes, fasta_t
             "message": "Archivo procesado y dividido en 1000 partes con éxito",
             "original_key": original_key,
             "chunks_folder": patient_folder,
-            "sequence_length": sequence_length,
+            "sequence_length": len(sequence),
             "chunks_created": 1000
         }
     )
