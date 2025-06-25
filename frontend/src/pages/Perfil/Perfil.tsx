@@ -6,6 +6,7 @@ import Sidebar from '../../components/Sidebar'
 import Topbar from '../../components/Topbar'
 import PredictionsPanel from '../../components/PredictionsPanel'
 import DNAViewer from '../../components/DNAViewer'
+import { API_CONFIG, buildApiUrl } from '../../config/api'
 import './Perfil.css'
 
 /* ---------- Tipos de dato ---------- */
@@ -147,7 +148,7 @@ const Perfil: React.FC = () => {
     }
 
     axios
-      .get('http://localhost:8000/doctors/me', { headers: hdr })
+      .get(buildApiUrl(API_CONFIG.ENDPOINTS.DOCTOR_ME), { headers: hdr })
       .then(res => {
         setDoctorName(res.data.nombre)
         setClinicName(res.data.clinic_name)
@@ -164,7 +165,7 @@ const Perfil: React.FC = () => {
     }
 
     axios
-      .get<Paciente>(`http://localhost:8000/pacientes/dni/${dni}`, { headers: hdr })
+      .get<Paciente>(buildApiUrl(API_CONFIG.ENDPOINTS.PACIENTE_BY_DNI(dni)), { headers: hdr })
       .then(res => {
         setPaciente(res.data)
         setLoadingPaciente(false)
@@ -180,7 +181,7 @@ const Perfil: React.FC = () => {
     if (!dni) return
     const hdr = tokenHeader()
     axios
-      .get<{ files: S3File[] }>(`http://localhost:8000/pacientes/${dni}/files`, { headers: hdr })
+      .get<{ files: S3File[] }>(buildApiUrl(API_CONFIG.ENDPOINTS.PACIENTE_FILES(dni!)), { headers: hdr })
       .then(res => {
         const filesWithDate = res.data.files.map(f => ({
             ...f,
@@ -277,22 +278,58 @@ const Perfil: React.FC = () => {
   }
 
   /* Descargar FASTA */
-  const handleDownload = (fn: string) => {
+  const handleDownload = async (fn: string) => {
     const hdr = tokenHeader()
-    axios
-      .get(`http://localhost:8000/pacientes/${dni}/files/${encodeURIComponent(fn)}`, {
-        headers: hdr,
-        responseType: 'blob'
-      })
-      .then(res => {
-        const url = URL.createObjectURL(res.data)
-        const a = document.createElement('a')
-        a.href = url
-        a.download = fn
-        a.click()
-        URL.revokeObjectURL(url)
-      })
-      .catch(console.error)
+    
+    try {
+      // Mostrar indicador de descarga para archivos grandes
+      const isLargeFile = fn.includes('aligned_') || fn.includes('patient_part_')
+      if (isLargeFile) {
+        console.log(`Descargando archivo grande: ${fn}...`)
+      }
+      
+      const response = await axios.get(
+        buildApiUrl(API_CONFIG.ENDPOINTS.DOWNLOAD_FILE(dni!, encodeURIComponent(fn))), 
+        {
+          headers: hdr,
+          responseType: 'blob',
+          timeout: isLargeFile ? 300000 : 30000, // 5 minutos para archivos grandes, 30 segundos para pequeños
+          onDownloadProgress: (progressEvent) => {
+            if (isLargeFile && progressEvent.total) {
+              const percentCompleted = Math.round((progressEvent.loaded * 100) / progressEvent.total)
+              console.log(`Progreso de descarga: ${percentCompleted}%`)
+            }
+          }
+        }
+      )
+      
+      const url = URL.createObjectURL(response.data)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = fn
+      document.body.appendChild(a) // Agregar al DOM para compatibilidad
+      a.click()
+      document.body.removeChild(a) // Limpiar
+      URL.revokeObjectURL(url)
+      
+      if (isLargeFile) {
+        console.log(`✅ Descarga completada: ${fn}`)
+      }
+      
+    } catch (error) {
+      console.error('Error descargando archivo:', error)
+      if (axios.isAxiosError(error)) {
+        if (error.code === 'ECONNABORTED') {
+          alert('La descarga tardó demasiado tiempo. El archivo puede ser muy grande.')
+        } else if (error.response?.status === 404) {
+          alert('Archivo no encontrado.')
+        } else {
+          alert(`Error descargando archivo: ${error.message}`)
+        }
+      } else {
+        alert('Error desconocido descargando archivo.')
+      }
+    }
   }
 
   /* Eliminar FASTA */
@@ -1063,7 +1100,7 @@ const Perfil: React.FC = () => {
             <PredictionsPanel
               patientDni={paciente.dni}
               patientName={`${paciente.nombres} ${paciente.apellidos}`}
-              mismatchFiles={files.filter(f => !f.isFolder && f.filename.startsWith('mismatches_') && f.filename.toLowerCase().endsWith('.fasta')).map(f => f.filename)}
+              embeddingFiles={files.filter(f => !f.isFolder && f.filename.toLowerCase().endsWith('.pkl')).map(f => f.filename)}
               onEmbeddingProcessed={refreshPatientFiles}
             />
           </div>

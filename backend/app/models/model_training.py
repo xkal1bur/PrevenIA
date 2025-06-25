@@ -69,6 +69,7 @@ class MLModelEvaluator:
         self.results = {}
         self.best_models = {}
         self.global_scaler = None  # scaler global para normalización
+        self.pca_transformer = None  # PCA transformer para guardar
         
     def load_and_preprocess_data(self):
         """Carga embeddings/labels desde NPY, realiza split y reducciones dimensionales."""
@@ -129,7 +130,13 @@ class MLModelEvaluator:
         # PCA sobre datos escalados
         print(f"Aplicando PCA (varianza retenida = {self.pca_variance*100:.1f}% )…")
         pca = PCA(n_components=self.pca_variance, random_state=42)
-        reducers['PCA'] = (pca.fit_transform(X_train_scaled), pca.transform(X_test_scaled))
+        X_train_pca = pca.fit_transform(X_train_scaled)
+        X_test_pca = pca.transform(X_test_scaled)
+        reducers['PCA'] = (X_train_pca, X_test_pca)
+        
+        # Guardar el PCA transformer para uso futuro
+        self.pca_transformer = pca
+        print(f"PCA transformer guardado con {pca.n_components_} componentes")
 
         self.reducers = reducers  # store for later
 
@@ -180,7 +187,7 @@ class MLModelEvaluator:
                 random_state=42, verbose=-1
             ),
             'XGBoost': XGBClassifier(
-                random_state=42, use_label_encoder=False, eval_metric='logloss',
+                random_state=42, eval_metric='logloss',
                 n_estimators=200
             ),
         }
@@ -380,37 +387,25 @@ class MLModelEvaluator:
     def create_ensemble_models(self):
         """Create ensemble models from the top performers"""
         print("\n" + "="*50)
-        print("CREANDO MODELOS ENSEMBLE")
+        print("CREANDO MODELO ENSEMBLE")
         print("="*50)
 
-        # Select top 5 models evaluated on Original representation
+        # Seleccionar los mejores 5 modelos globalmente (sin importar representación)
         sorted_models = sorted(
-            [(n, r) for n, r in self.results.items() if n.startswith('Original |')],
+            self.results.items(), 
             key=lambda x: x[1]['test_pr_auc'], reverse=True
         )
-        top_models = sorted_models[:5]
+        top_5_models = sorted_models[:5]
 
-        print("Modelos seleccionados para el ensemble (Soft Voting):")
+        print("Top 5 modelos seleccionados para el ensemble (Soft Voting):")
         estimators = []
-        for name, _ in top_models:
+        for name, results in top_5_models:
             base_model = self.best_models[name]
             est_name = name.replace(' | ', '_').replace(' ', '_').lower()
             estimators.append((est_name, base_model))
-            print(f"  • {name}")
+            print(f"  • {name} (PR AUC: {results['test_pr_auc']:.4f})")
 
-        # Hard Voting ensemble
-        voting_hard = VotingClassifier(estimators=estimators, voting='hard', n_jobs=self.n_jobs)
-        results_hard, model_hard = self.evaluate_model(
-            'Ensemble (Hard Voting)', voting_hard,
-            self.X_train, self.X_test, self.y_train, self.y_test,
-            param_grid=None
-        )
-
-        if results_hard:
-            self.results['Ensemble (Hard Voting)'] = results_hard
-            self.best_models['Ensemble (Hard Voting)'] = model_hard
-
-        # Soft Voting ensemble (requires predict_proba)
+        # Soft Voting ensemble (usa datos originales)
         voting_soft = VotingClassifier(estimators=estimators, voting='soft', n_jobs=self.n_jobs)
         results_soft, model_soft = self.evaluate_model(
             'Ensemble (Soft Voting)', voting_soft,
@@ -469,6 +464,13 @@ class MLModelEvaluator:
             with open(scaler_path, 'wb') as f:
                 pickle.dump(self.global_scaler, f)
             print(f"Scaler global guardado: {scaler_path.name}")
+
+        # Guardar PCA transformer (si existe)
+        if self.pca_transformer is not None:
+            pca_path = models_dir / 'pca_transformer.pk'
+            with open(pca_path, 'wb') as f:
+                pickle.dump(self.pca_transformer, f)
+            print(f"PCA transformer guardado: {pca_path.name}")
     
     def create_visualizations(self):
         """Create visualizations of results"""

@@ -1,4 +1,4 @@
-const API_BASE_URL = 'http://localhost:8000'
+import { API_CONFIG, buildApiUrl, getAuthFormHeaders } from '../config/api'
 
 export interface Prediction {
   prediction: string
@@ -42,9 +42,36 @@ export interface PredictionsResponse {
 }
 
 export const predictionService = {
+  async getPredictionsWithEmbedding(dni: string, embeddingFilename: string, token: string): Promise<PredictionsResponse> {
+    try {
+      const formData = new FormData()
+      formData.append('embedding_filename', embeddingFilename)
+
+      const url = buildApiUrl(API_CONFIG.ENDPOINTS.PREDICTIONS(dni))
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`
+        },
+        body: formData
+      })
+      
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`)
+      }
+      
+      const data: PredictionsResponse = await response.json()
+      return data
+    } catch (error) {
+      console.error('Error fetching predictions with embedding:', error)
+      throw error
+    }
+  },
+
   async getPredictionsForPatient(dni: string, token: string): Promise<PredictionsResponse> {
     try {
-      const response = await fetch(`${API_BASE_URL}/predictions/${dni}`, {
+      const url = buildApiUrl(API_CONFIG.ENDPOINTS.PREDICTIONS(dni))
+      const response = await fetch(url, {
         headers: {
           'Authorization': `Bearer ${token}`
         }
@@ -71,11 +98,10 @@ export const predictionService = {
       const formData = new FormData()
       formData.append('filename', filename)
 
-      const response = await fetch(`${API_BASE_URL}/pacientes/${dni}/process_embedding`, {
+      const url = buildApiUrl(API_CONFIG.ENDPOINTS.PROCESS_EMBEDDING(dni))
+      const response = await fetch(url, {
         method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${token}`
-        },
+        headers: getAuthFormHeaders(token),
         body: formData
       })
 

@@ -501,12 +501,12 @@ const DNAViewer: React.FC<DNAViewerProps> = ({
       const windowEnd   = Math.min(totalLength - 1, globalPos + 64)
       const windowSize  = windowEnd - windowStart + 1
 
-      // Obtener subsecuencia de referencia usando la función ya optimizada
-      const refSubSeqChunk = await getReferenceChunk(windowStart, windowSize)
+      // Obtener subsecuencia del PACIENTE (no referencia) usando la función optimizada
+      const patientSubSeqChunk = await loadPatientChunk(windowStart, windowSize)
 
-      // Añadir entrada al FASTA
+      // Añadir entrada al FASTA con la secuencia del paciente (variante)
       fastaContent += `>Mismatch_${i + 1}_pos_${globalPos + 1}_window_${windowStart + 1}-${windowEnd + 1}\n`
-      fastaContent += refSubSeqChunk.data + '\n'
+      fastaContent += patientSubSeqChunk.data + '\n'
     }
 
     try {
