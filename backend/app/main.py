@@ -25,6 +25,7 @@ from fastapi import Response
 import asyncio
 import concurrent.futures
 from functools import partial
+import time
 
 models.Base.metadata.create_all(bind=engine)
 
@@ -359,6 +360,80 @@ def extract_sequences_from_multi_fasta(fasta_content: str) -> list[str]:
 
     return sequences
 
+def extract_mismatches_from_fasta(fasta_content: str) -> list[tuple[int, str]]:
+    """
+    Extrae información de mismatches de un archivo FASTA con headers que contienen posición.
+    Retorna una lista de tuplas (posición, secuencia_alterada).
+    """
+    mismatches = []
+    current_sequence = ""
+    current_position = None
+    
+    for line in fasta_content.split('\n'):
+        line = line.strip()
+        if line.startswith('>'):
+            # Si hay una secuencia acumulada, agregarla a la lista
+            if current_sequence and current_position is not None:
+                clean_seq = ''.join(c for c in current_sequence.upper() if c in 'ATCGN-')
+                if clean_seq:
+                    mismatches.append((current_position, clean_seq))
+                current_sequence = ""
+                current_position = None
+            
+            # Extraer posición del header (formato: >Mismatch_1_pos_12345_window_...)
+            try:
+                parts = line.split('_')
+                # Buscar la parte que dice 'pos' y tomar el siguiente número
+                for i, part in enumerate(parts):
+                    if part == 'pos' and i + 1 < len(parts):
+                        current_position = int(parts[i + 1])
+                        break
+            except (ValueError, IndexError):
+                print(f"⚠️ [EMBEDDING] No se pudo extraer posición del header: {line}")
+                
+        else:
+            # Acumular la secuencia
+            current_sequence += line
+    
+    # Agregar la última secuencia si existe
+    if current_sequence and current_position is not None:
+        clean_seq = ''.join(c for c in current_sequence.upper() if c in 'ATCGN-')
+        if clean_seq:
+            mismatches.append((current_position, clean_seq))
+    
+    return mismatches
+
+# Constantes para parse_sequences3
+WINDOW_SIZE = 128
+complement_table = str.maketrans("ATCG", "TAGC")
+
+def parse_sequences3(mid_pos: int, alt_seq: str, chr13_seq: str) -> tuple[str, str, str, str]:
+    """
+    Genera 4 secuencias para una mutación dada:
+    - ref_seq: secuencia de referencia 
+    - var_seq: secuencia variante
+    - ref_seq_rev_comp: complemento reverso de referencia
+    - var_seq_rev_comp: complemento reverso de variante
+    """
+    p = mid_pos - 1  # Convertir a índice base-0
+    full_seq = chr13_seq
+
+    ref_seq_start = p - WINDOW_SIZE//2
+    ref_seq_end = p + WINDOW_SIZE//2
+    ref_seq = full_seq[ref_seq_start:ref_seq_end+1]
+
+    dash_count = alt_seq.count("-")
+    var_seq = alt_seq.replace("-", "")
+    var_seq += full_seq[ref_seq_end+1:ref_seq_end+1+dash_count]
+
+    ref_seq_rev_comp = ref_seq.translate(complement_table)[::-1]
+    var_seq_rev_comp = var_seq.translate(complement_table)[::-1]
+
+    # Verificar que todas las secuencias tienen la longitud correcta
+    assert len(var_seq) == len(ref_seq) == WINDOW_SIZE + 1, f"Longitudes incorrectas: ref={len(ref_seq)}, var={len(var_seq)}, esperado={WINDOW_SIZE + 1}"
+
+    return ref_seq, var_seq, ref_seq_rev_comp, var_seq_rev_comp
+
 import subprocess
 import tempfile
 
@@ -615,12 +690,12 @@ async def process_normal_fasta(dni: str, filename: str, contents: bytes, fasta_t
 ### ——— ENDPOINT PARA PREDICCIONES DE ML ——— ###
 
 @app.get("/predictions/{dni}", response_model=schemas.PredictionsResponse, tags=["ML Predictions"])
-def get_predictions_for_patient(
+def get_predictions_for_patient_get(
     dni: str = Path(..., description="DNI del paciente"),
     db: Session = Depends(get_db),
     current_doc: models.Doctor = Depends(auth.get_current_doctor)
 ):
-    """Obtener predicciones de ML para un paciente específico"""
+    """Obtener predicciones de ML para un paciente específico (método GET - usa embedding por defecto)"""
     try:
         # Verificar que el paciente existe y pertenece al doctor
         paciente = crud.get_paciente_por_dni(db, dni)
@@ -630,12 +705,108 @@ def get_predictions_for_patient(
                 detail="Paciente no encontrado o no te pertenece"
             )
         
-        # Obtener predicciones personalizadas para el paciente
+        # Obtener predicciones personalizadas para el paciente (usa embedding por defecto)
         return ml_service.get_predictions_for_patient(dni, paciente.nombres, paciente.apellidos)
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error obteniendo predicciones: {str(e)}")
+
+@app.post("/predictions/{dni}", response_model=schemas.PredictionsResponse, tags=["ML Predictions"])
+def get_predictions_with_embedding(
+    dni: str = Path(..., description="DNI del paciente"),
+    embedding_filename: str = Form(..., description="Nombre del archivo .pkl con el embedding"),
+    db: Session = Depends(get_db),
+    current_doc: models.Doctor = Depends(auth.get_current_doctor)
+):
+    """Obtener predicciones de ML usando un archivo de embedding específico (.pkl)"""
+    
+    print(f"🔬 [PREDICTIONS] Iniciando predicciones con embedding específico")
+    print(f"   📋 DNI: {dni}")
+    print(f"   📄 Archivo embedding: {embedding_filename}")
+    print(f"   👨‍⚕️ Doctor: {current_doc.nombre} (ID: {current_doc.id})")
+    
+    try:
+        # Verificar que el paciente existe y pertenece al doctor
+        print(f"🔍 [PREDICTIONS] Verificando paciente...")
+        paciente = crud.get_paciente_por_dni(db, dni)
+        if not paciente or paciente.doctor_id != current_doc.id:
+            print(f"❌ [PREDICTIONS] Paciente no encontrado o no autorizado")
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Paciente no encontrado o no te pertenece"
+            )
+        print(f"✅ [PREDICTIONS] Paciente verificado: {paciente.nombres} {paciente.apellidos}")
+        
+        # Verificar que el archivo de embedding existe en S3
+        embedding_key = f"{dni}/{embedding_filename}"
+        print(f"📂 [PREDICTIONS] Verificando embedding en S3: {embedding_key}")
+        
+        try:
+            # Verificar que el archivo existe y es un .pkl
+            if not embedding_filename.endswith('.pkl'):
+                raise HTTPException(status_code=400, detail="El archivo debe ser un embedding .pkl")
+            
+            embedding_obj = s3_client.get_object(Bucket=BUCKET_NAME, Key=embedding_key)
+            embedding_data = embedding_obj["Body"].read()
+            embedding_size = len(embedding_data)
+            print(f"✅ [PREDICTIONS] Embedding encontrado: {embedding_size:,} bytes ({embedding_size/(1024*1024):.2f} MB)")
+            
+        except s3_client.exceptions.NoSuchKey:
+            print(f"❌ [PREDICTIONS] Archivo de embedding no encontrado: {embedding_key}")
+            raise HTTPException(status_code=404, detail=f"Archivo de embedding no encontrado: {embedding_filename}")
+        except Exception as e:
+            print(f"❌ [PREDICTIONS] Error accediendo al embedding: {e}")
+            raise HTTPException(status_code=500, detail=f"Error accediendo al archivo de embedding: {e}")
+        
+        # Deserializar el embedding
+        print(f"🔄 [PREDICTIONS] Deserializando embedding...")
+        try:
+            embedding = pickle.loads(embedding_data)
+            print(f"✅ [PREDICTIONS] Embedding deserializado: shape {embedding.shape}, dtype {embedding.dtype}")
+            
+            # Verificar que el embedding tiene la forma correcta
+            if embedding.shape[0] != 32768:
+                print(f"⚠️ [PREDICTIONS] Forma de embedding inesperada: {embedding.shape}, esperado (32768,)")
+                raise HTTPException(status_code=400, detail=f"Embedding inválido: esperado 32768 características, encontrado {embedding.shape[0]}")
+                
+        except pickle.UnpicklingError as e:
+            print(f"❌ [PREDICTIONS] Error deserializando pickle: {e}")
+            raise HTTPException(status_code=400, detail="Archivo de embedding corrupto o inválido")
+        except Exception as e:
+            print(f"❌ [PREDICTIONS] Error procesando embedding: {e}")
+            raise HTTPException(status_code=500, detail=f"Error procesando embedding: {e}")
+        
+        # Obtener predicciones usando el embedding específico
+        print(f"🤖 [PREDICTIONS] Generando predicciones con ML...")
+        try:
+            # Pasar el embedding al servicio ML
+            predictions = ml_service.get_predictions_for_patient_with_embedding(
+                dni, 
+                paciente.nombres, 
+                paciente.apellidos, 
+                embedding,
+                embedding_filename
+            )
+            
+            print(f"✅ [PREDICTIONS] Predicciones generadas exitosamente")
+            print(f"   📊 Modelos utilizados: {predictions.get('total_models', 'N/A')}")
+            print(f"   🎯 Estado: {predictions.get('status', 'N/A')}")
+            
+            return predictions
+            
+        except Exception as e:
+            print(f"❌ [PREDICTIONS] Error en servicio ML: {e}")
+            raise HTTPException(status_code=500, detail=f"Error generando predicciones: {e}")
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"💥 [PREDICTIONS] Error inesperado: {e}")
+        import traceback
+        print(f"📋 [PREDICTIONS] Traceback completo:")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Error inesperado: {str(e)}")
 
 
 # LISTAR archivos en S3 para un paciente
@@ -881,10 +1052,23 @@ def download_fasta_file(
     try:
         obj = s3_client.get_object(Bucket=BUCKET_NAME, Key=key)
         stream = obj["Body"]
+        content_length = obj.get("ContentLength", 0)
+        
+        # Headers optimizados para archivos grandes
         headers = {
-            "Content-Disposition": f"attachment; filename={filename}"
+            "Content-Disposition": f"attachment; filename={filename}",
+            "Content-Length": str(content_length),
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive"
         }
-        return StreamingResponse(stream, media_type="text/plain", headers=headers)
+        
+        # Usar application/octet-stream para archivos grandes (>1MB)
+        if content_length > 1024 * 1024:  # > 1MB
+            media_type = "application/octet-stream"
+        else:
+            media_type = "text/plain"
+            
+        return StreamingResponse(stream, media_type=media_type, headers=headers)
     except s3_client.exceptions.NoSuchKey:
         # Si no se encuentra en la carpeta específica, intentar en otras ubicaciones
         alternative_keys = []
@@ -900,10 +1084,24 @@ def download_fasta_file(
             try:
                 obj = s3_client.get_object(Bucket=BUCKET_NAME, Key=alt_key)
                 stream = obj["Body"]
+                content_length = obj.get("ContentLength", 0)
+                
+                # Headers optimizados para archivos grandes
                 headers = {
-                    "Content-Disposition": f"attachment; filename={filename}"
+                    "Content-Disposition": f"attachment; filename={filename}",
+                    "Content-Length": str(content_length),
+                    "Cache-Control": "no-cache",
+                    "Connection": "keep-alive"
                 }
-                media_type = "text/plain" if alt_key.endswith(('.fasta', '.fa', '.fna')) else "application/octet-stream"
+                
+                # Usar application/octet-stream para archivos grandes (>1MB)
+                if content_length > 1024 * 1024:  # > 1MB
+                    media_type = "application/octet-stream"
+                elif alt_key.endswith(('.fasta', '.fa', '.fna')):
+                    media_type = "text/plain"
+                else:
+                    media_type = "application/octet-stream"
+                    
                 return StreamingResponse(stream, media_type=media_type, headers=headers)
             except s3_client.exceptions.NoSuchKey:
                 continue
@@ -1472,60 +1670,127 @@ async def process_sequence_embedding(
 ):
     """Procesa una secuencia FASTA del paciente usando la API de NVIDIA NIM para generar embeddings"""
     
+    print(f"🔬 [EMBEDDING] Iniciando procesamiento de embeddings")
+    print(f"   📋 DNI: {dni}")
+    print(f"   📄 Archivo: {filename}")
+    print(f"   👨‍⚕️ Doctor: {current_doc.nombre} (ID: {current_doc.id})")
+    
     # Verificar que el paciente existe y pertenece al doctor
+    print(f"🔍 [EMBEDDING] Verificando paciente...")
     paciente = crud.get_paciente_por_dni(db, dni)
     if not paciente or paciente.doctor_id != current_doc.id:
+        print(f"❌ [EMBEDDING] Paciente no encontrado o no autorizado")
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Paciente no encontrado o no te pertenece"
         )
+    print(f"✅ [EMBEDDING] Paciente verificado: {paciente.nombres} {paciente.apellidos}")
     
     # Verificar que la clave de API existe
+    print(f"🔑 [EMBEDDING] Verificando clave API...")
     if not NIM_KEY:
+        print(f"❌ [EMBEDDING] Clave de API no configurada")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Clave de API de NVIDIA NIM no configurada"
         )
+    print(f"✅ [EMBEDDING] Clave API configurada (longitud: {len(NIM_KEY)} caracteres)")
     
     try:
         # Obtener el archivo del paciente desde S3
         patient_file_key = f"{dni}/{filename}"
+        print(f"📂 [EMBEDDING] Obteniendo archivo de S3: {patient_file_key}")
+        
         try:
             patient_obj = s3_client.get_object(Bucket=BUCKET_NAME, Key=patient_file_key)
             patient_content = patient_obj["Body"].read().decode('utf-8')
+            content_size = len(patient_content)
+            print(f"✅ [EMBEDDING] Archivo obtenido exitosamente ({content_size:,} caracteres)")
         except s3_client.exceptions.NoSuchKey:
+            print(f"❌ [EMBEDDING] Archivo no encontrado en S3: {patient_file_key}")
             raise HTTPException(status_code=404, detail="Archivo del paciente no encontrado")
+        except Exception as e:
+            print(f"❌ [EMBEDDING] Error obteniendo archivo de S3: {e}")
+            raise HTTPException(status_code=500, detail=f"Error accediendo al archivo: {e}")
         
-        # Detectar si el archivo contiene múltiples entradas FASTA (mismatches_*.fasta)
-        sequences: list[str]
-        if filename.startswith("mismatches_") or patient_content.count('>') > 1:
-            sequences = extract_sequences_from_multi_fasta(patient_content)
-        else:
-            single_seq = extract_sequence_from_fasta(patient_content)
-            sequences = [single_seq] if single_seq else []
+        # Obtener la secuencia de referencia cr13
+        print(f"🧬 [EMBEDDING] Obteniendo secuencia de referencia cr13...")
+        chr13_seq = get_cr13_sequence()
+        if not chr13_seq:
+            print(f"❌ [EMBEDDING] No se pudo cargar la secuencia de referencia cr13")
+            raise HTTPException(status_code=500, detail="No se pudo cargar la secuencia de referencia cr13")
+        print(f"✅ [EMBEDDING] Secuencia cr13 cargada: {len(chr13_seq):,} bases")
 
-        if not sequences:
-            raise HTTPException(status_code=400, detail="No se pudo extraer ninguna secuencia válida del archivo FASTA")
+        # Detectar si el archivo contiene mismatches con posiciones
+        print(f"🧬 [EMBEDDING] Analizando contenido FASTA...")
+        header_count = patient_content.count('>')
+        print(f"   🏷️ Headers encontrados: {header_count}")
         
-        # Procesar cada secuencia con la API de NVIDIA NIM y acumular embeddings
-        tensors: list[np.ndarray] = []
+        if filename.startswith("mismatches_"):
+            print(f"🎯 [EMBEDDING] Procesando archivo de mismatches con posiciones")
+            mismatches = extract_mismatches_from_fasta(patient_content)
+            print(f"🧬 [EMBEDDING] Mismatches extraídos: {len(mismatches)}")
+
+            if not mismatches:
+                print(f"❌ [EMBEDDING] No se pudieron extraer mismatches válidos")
+                raise HTTPException(status_code=400, detail="No se pudieron extraer mismatches válidos del archivo")
+                
+            for i, (pos, seq) in enumerate(mismatches[:3]):  # Solo mostrar los primeros 3
+                print(f"   Mismatch {i+1}: posición {pos:,}, secuencia {len(seq):,} bases")
+            if len(mismatches) > 3:
+                print(f"   ... y {len(mismatches) - 3} mismatches más")
+        else:
+            print(f"❌ [EMBEDDING] Este endpoint solo procesa archivos de mismatches (mismatches_*.fasta)")
+            raise HTTPException(status_code=400, detail="Este endpoint solo procesa archivos de mismatches")
+        
+        # Procesar cada mismatch con la API de NVIDIA NIM
+        print(f"🤖 [EMBEDDING] Iniciando procesamiento con NVIDIA NIM...")
+        mutation_embeddings: list[np.ndarray] = []  # Vector de 32768 por mutación
 
         API_URL = "https://health.api.nvidia.com/v1/biology/arc/evo2-40b/forward"
+        print(f"🔗 [EMBEDDING] URL de API: {API_URL}")
         
         try:
-            for seq in sequences:
+            for i, (mid_pos, alt_seq) in enumerate(mismatches, 1):
+                print(f"🎯 [EMBEDDING] Procesando mismatch {i}/{len(mismatches)} en posición {mid_pos:,}...")
+                
+                # Generar las 4 secuencias para esta mutación
+                print(f"   🧬 Generando 4 secuencias variantes...")
+                ref_seq, var_seq, ref_seq_rev_comp, var_seq_rev_comp = parse_sequences3(mid_pos, alt_seq, chr13_seq)
+                
+                four_sequences = [
+                    ("ref_seq", ref_seq),
+                    ("var_seq", var_seq), 
+                    ("ref_seq_rev_comp", ref_seq_rev_comp),
+                    ("var_seq_rev_comp", var_seq_rev_comp)
+                ]
+                
+                print(f"   📏 Longitudes de secuencias: {[len(seq[1]) for seq in four_sequences]}")
+                
+                # Obtener embeddings para las 4 secuencias
+                sequence_embeddings = []
+                
+                for j, (seq_type, sequence) in enumerate(four_sequences, 1):
+                    print(f"   ⚡ Procesando {seq_type} ({j}/4) - {len(sequence):,} bases...")
+                    
+                    start_time = time.time()
                 response = requests.post(
                     url=API_URL,
                     headers={"Authorization": f"Bearer {NIM_KEY}"},
                     json={
-                        "sequence": seq,
+                            "sequence": sequence,
                         "output_layers": ["blocks.24.inner_mha_cls"]
                     },
                     timeout=300  # 5 min por secuencia
                 )
+                    
+                    elapsed_time = time.time() - start_time
+                    print(f"      ⏱️ Tiempo: {elapsed_time:.2f}s, Status: {response.status_code}")
+                    
                 response.raise_for_status()
 
                 content_type = response.headers.get('content-type', '')
+                    
                 if 'application/zip' in content_type:
                     zip_data = io.BytesIO(response.content)
                     with zipfile.ZipFile(zip_data, 'r') as zip_file:
@@ -1538,71 +1803,136 @@ async def process_sequence_embedding(
                     raise HTTPException(500, f"Content-Type no soportado: {content_type}")
 
                 if 'data' not in rj:
-                    raise HTTPException(500, "Campo 'data' no encontrado en la respuesta de la API")
+                        raise HTTPException(500, f"Campo 'data' no encontrado para {seq_type}")
 
                 tensor_data = base64.b64decode(rj['data'])
                 tensor_dict = np.load(io.BytesIO(tensor_data))
-                if 'blocks.24.inner_mha_cls.output' not in tensor_dict:
-                    raise HTTPException(500, "Clave de embedding no encontrada en la respuesta")
+                    
+                    expected_key = 'blocks.24.inner_mha_cls.output'
+                    if expected_key not in tensor_dict:
+                        raise HTTPException(500, f"Clave de embedding no encontrada para {seq_type}")
 
-                tensors.append(tensor_dict['blocks.24.inner_mha_cls.output'])
+                    tensor = tensor_dict[expected_key]
+                    print(f"      ✅ Embedding {seq_type}: shape original {tensor.shape}")
+                    
+                    # Promedio por dimensión 1 (longitud de secuencia) y luego flatten
+                    # De (1, seq_len, 8192) -> (1, 8192) -> (8192,)
+                    avg_tensor = np.mean(tensor, axis=1)  # Promedio por tokens
+                    print(f"      📊 Shape después de promedio axis=1: {avg_tensor.shape}")
+                    
+                    flat_tensor = avg_tensor.flatten()   # Flatten para obtener (8192,)
+                    print(f"      📏 Shape después de flatten: {flat_tensor.shape}")
+                    
+                    # Verificación final del tamaño
+                    if len(flat_tensor) != 8192:
+                        raise HTTPException(500, f"Vector final inesperado para {seq_type}: {len(flat_tensor)}, esperado 8192")
+                    
+                    sequence_embeddings.append(flat_tensor)  # Vector de 8192 elementos
+                    print(f"      ✅ Vector {seq_type} agregado: {len(flat_tensor)} elementos")
+                
+                # Promediar los 4 embeddings y concatenar para formar vector de 32768
+                print(f"   🧮 Promediando 4 embeddings...")
+                print(f"      📊 Shapes de los 4 embeddings: {[emb.shape for emb in sequence_embeddings]}")
+                
+                sequence_embeddings_array = np.array(sequence_embeddings)
+                print(f"      📊 Array de embeddings: shape {sequence_embeddings_array.shape}")
+                
+                avg_embedding = np.mean(sequence_embeddings_array, axis=0)  # Promedio de shape (8192,)
+                print(f"      📊 Embedding promediado: shape {avg_embedding.shape}")
+                
+                # Concatenar 4 veces para formar vector de 32768
+                concatenated_embedding = np.concatenate([avg_embedding] * 4)
+                print(f"   🔗 Vector concatenado: shape {concatenated_embedding.shape}")
+                
+                mutation_embeddings.append(concatenated_embedding)
 
         except requests.exceptions.RequestException as e:
+            print(f"❌ [EMBEDDING] Error de conexión con NVIDIA NIM: {e}")
             raise HTTPException(500, f"Error al procesar con la API de NVIDIA NIM: {str(e)}")
         except Exception as e:
+            print(f"❌ [EMBEDDING] Error procesando respuesta de API: {e}")
             raise HTTPException(500, f"Error procesando la respuesta de la API: {str(e)}")
 
-        if not tensors:
+        print(f"🧮 [EMBEDDING] Embeddings de mutaciones obtenidos: {len(mutation_embeddings)}")
+        if not mutation_embeddings:
+            print(f"❌ [EMBEDDING] No se obtuvieron embeddings")
             raise HTTPException(500, "No se pudo obtener embeddings de la API")
 
-        # Asegurar que todas las formas coinciden antes de hacer promedio
-        try:
-            stacked = np.stack(tensors, axis=0)
-        except ValueError:
-            raise HTTPException(500, "Los embeddings recibidos tienen formas incompatibles")
+        # Verificar que todos los embeddings tienen el tamaño correcto (32768)
+        print(f"🔢 [EMBEDDING] Verificando embeddings de mutaciones...")
+        for i, embedding in enumerate(mutation_embeddings):
+            print(f"   Mutación {i+1}: shape {embedding.shape}")
+            if embedding.shape[0] != 32768:
+                print(f"⚠️ [EMBEDDING] Tamaño inesperado en mutación {i+1}: {embedding.shape[0]} != 32768")
 
-        avg_tensor = np.mean(stacked, axis=0)
+        # Promediar todos los embeddings de mutaciones para obtener el resultado final
+        print(f"🧮 [EMBEDDING] Promediando {len(mutation_embeddings)} embeddings de mutaciones...")
+        final_embedding = np.mean(mutation_embeddings, axis=0)
+        print(f"   Embedding final: shape {final_embedding.shape}, dtype {final_embedding.dtype}")
 
         # Guardar el embedding en S3 como archivo pickle
+        print(f"💾 [EMBEDDING] Guardando embedding en S3...")
         try:
-            # Serializar el tensor numpy
-            embedding_data = pickle.dumps(avg_tensor)
+            # Serializar el embedding final
+            print(f"   🔄 Serializando embedding final con pickle...")
+            embedding_data = pickle.dumps(final_embedding)
+            embedding_size = len(embedding_data)
+            print(f"   📦 Datos serializados: {embedding_size:,} bytes ({embedding_size/(1024*1024):.2f} MB)")
             
             # Crear nombre del archivo de embedding
             base_filename = filename.rsplit('.', 1)[0]  # Quitar extensión
             embedding_filename = f"embedding_paciente_{base_filename}.pkl"
             embedding_key = f"{dni}/{embedding_filename}"  # Guardar en la raíz de la carpeta del paciente
+            print(f"   🗂️ Archivo destino: {embedding_key}")
             
             # Subir a S3
+            print(f"   ☁️ Subiendo a S3...")
             s3_client.put_object(
                 Bucket=BUCKET_NAME,
                 Key=embedding_key,
                 Body=embedding_data,
                 ContentType="application/octet-stream"
             )
+            print(f"   ✅ Embedding guardado exitosamente en S3")
             
-            return JSONResponse(
-                status_code=200,
-                content={
+            result = {
                     "message": f"Embedding generado exitosamente para {filename}",
                     "original_file": filename,
                     "embedding_file": embedding_filename,
                     "embedding_key": embedding_key,
-                    "sequence_count": len(sequences),
-                    "avg_embedding_shape": list(avg_tensor.shape),
-                    "api_used": "NVIDIA NIM EVO-2 40B"
-                }
-            )
+                "mutations_processed": len(mismatches),
+                "sequences_per_mutation": 4,
+                "total_api_calls": len(mismatches) * 4,
+                "embedding_shape": list(final_embedding.shape),
+                "embedding_size_mb": round(embedding_size/(1024*1024), 2),
+                "api_used": "NVIDIA NIM EVO-2 40B",
+                "processing_method": "4_sequences_per_mutation_averaged_and_concatenated"
+            }
+            
+            print(f"🎉 [EMBEDDING] Procesamiento completado exitosamente!")
+            print(f"   📄 Archivo original: {filename}")
+            print(f"   🎯 Mutaciones procesadas: {len(mismatches)}")
+            print(f"   🧬 Total llamadas a API: {len(mismatches) * 4}")
+            print(f"   📊 Forma del embedding final: {final_embedding.shape}")
+            print(f"   💾 Tamaño: {result['embedding_size_mb']} MB")
+            
+            return JSONResponse(status_code=200, content=result)
             
         except Exception as e:
+            print(f"❌ [EMBEDDING] Error guardando en S3: {e}")
             raise HTTPException(
                 status_code=500, 
                 detail=f"Error guardando embedding en S3: {str(e)}"
             )
             
-    except HTTPException:
+    except HTTPException as e:
+        print(f"❌ [EMBEDDING] HTTPException: {e.detail}")
         raise
     except Exception as e:
+        print(f"💥 [EMBEDDING] Error inesperado: {e}")
+        import traceback
+        print(f"📋 [EMBEDDING] Traceback completo:")
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Error inesperado: {str(e)}")
 
 @app.get("/pacientes/stats/monthly_new", tags=["Estadísticas"])
@@ -1803,3 +2133,70 @@ def delete_appointment(
         raise HTTPException(status_code=403, detail="No autorizado")
     crud.delete_appointment(db, appointment_id)
     return Response(status_code=204)
+
+@app.head("/pacientes/{dni}/files/{filename}", tags=["Pacientes"])
+def get_file_info(
+    dni: str,
+    filename: str,
+    current_doc: models.Doctor = Depends(auth.get_current_doctor)
+):
+    """
+    Obtiene información del archivo (tamaño, tipo, etc.) sin descargarlo.
+    Útil para verificar archivos grandes antes de la descarga.
+    """
+    # Determinar la ubicación del archivo según su patrón
+    if filename.startswith("patient_part_") and filename.endswith(".fasta"):
+        key = f"{dni}/patient_chunks/{filename}"
+    elif filename.startswith("aligned_part_") and filename.endswith(".fasta"):
+        key = f"{dni}/aligned_chunks/{filename}"
+    else:
+        key = f"{dni}/{filename}"
+    
+    try:
+        # Usar head_object para obtener metadatos sin descargar el archivo
+        response = s3_client.head_object(Bucket=BUCKET_NAME, Key=key)
+        content_length = response.get("ContentLength", 0)
+        last_modified = response.get("LastModified")
+        
+        # Headers con información del archivo
+        headers = {
+            "Content-Length": str(content_length),
+            "Last-Modified": last_modified.strftime("%a, %d %b %Y %H:%M:%S GMT") if last_modified else "",
+            "X-File-Size-MB": str(round(content_length / (1024 * 1024), 2)),
+            "X-File-Type": "large" if content_length > 1024 * 1024 else "small"
+        }
+        
+        return Response(status_code=200, headers=headers)
+        
+    except s3_client.exceptions.NoSuchKey:
+        # Intentar ubicaciones alternativas
+        alternative_keys = []
+        
+        if key.startswith(f"{dni}/patient_chunks/"):
+            alternative_keys = [f"{dni}/{filename}", f"{dni}/aligned_chunks/{filename}"]
+        elif key.startswith(f"{dni}/aligned_chunks/"):
+            alternative_keys = [f"{dni}/{filename}", f"{dni}/patient_chunks/{filename}"]
+        else:
+            alternative_keys = [f"{dni}/patient_chunks/{filename}", f"{dni}/aligned_chunks/{filename}"]
+        
+        for alt_key in alternative_keys:
+            try:
+                response = s3_client.head_object(Bucket=BUCKET_NAME, Key=alt_key)
+                content_length = response.get("ContentLength", 0)
+                last_modified = response.get("LastModified")
+                
+                headers = {
+                    "Content-Length": str(content_length),
+                    "Last-Modified": last_modified.strftime("%a, %d %b %Y %H:%M:%S GMT") if last_modified else "",
+                    "X-File-Size-MB": str(round(content_length / (1024 * 1024), 2)),
+                    "X-File-Type": "large" if content_length > 1024 * 1024 else "small"
+                }
+                
+                return Response(status_code=200, headers=headers)
+                
+            except s3_client.exceptions.NoSuchKey:
+                continue
+        
+        raise HTTPException(status_code=404, detail="Archivo no encontrado")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error obteniendo información del archivo: {e}")
