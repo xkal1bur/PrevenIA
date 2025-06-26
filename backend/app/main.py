@@ -472,6 +472,53 @@ async def upload_fasta(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error subiendo archivo: {e}")
 
+@app.post("/pacientes/{dni}/upload_file")
+async def upload_file(
+    dni: str = Path(..., description="DNI del paciente"),
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db)
+):
+    """
+    Endpoint para subir archivos generales (PKL, etc.) sin procesamiento específico
+    """
+    
+    # Validar extensiones permitidas
+    allowed_extensions = [".pkl", ".json", ".txt", ".csv"]
+    file_ext = "." + file.filename.split(".")[-1].lower() if "." in file.filename else ""
+    
+    if file_ext not in allowed_extensions:
+        raise HTTPException(
+            status_code=400, 
+            detail=f"Solo se permiten archivos con extensiones: {', '.join(allowed_extensions)}"
+        )
+
+    try:
+        # Leer el contenido del archivo
+        contents = await file.read()
+
+        # Subir archivo directamente a S3 sin procesamiento
+        file_key = f"{dni}/{file.filename}"
+        s3_client.put_object(
+            Bucket=BUCKET_NAME,
+            Key=file_key,
+            Body=contents,
+            ContentType="application/octet-stream"
+        )
+
+        return JSONResponse(
+            status_code=200, 
+            content={
+                "message": f"Archivo {file.filename} subido correctamente",
+                "key": file_key,
+                "filename": file.filename,
+                "type": "general_file",
+                "extension": file_ext
+            }
+        )
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error subiendo archivo: {e}")
+
 async def upload_chunk_to_s3(s3_client, bucket_name: str, key: str, body: str):
     """Función auxiliar para subir un chunk a S3 de forma asíncrona"""
     loop = asyncio.get_event_loop()
@@ -1784,8 +1831,8 @@ async def process_sequence_embedding(
                     timeout=300  # 5 min por secuencia
                 )
                     
-                    elapsed_time = time.time() - start_time
-                    print(f"      ⏱️ Tiempo: {elapsed_time:.2f}s, Status: {response.status_code}")
+                elapsed_time = time.time() - start_time
+                print(f"      ⏱️ Tiempo: {elapsed_time:.2f}s, Status: {response.status_code}")
                     
                 response.raise_for_status()
 
@@ -1808,27 +1855,27 @@ async def process_sequence_embedding(
                 tensor_data = base64.b64decode(rj['data'])
                 tensor_dict = np.load(io.BytesIO(tensor_data))
                     
-                    expected_key = 'blocks.24.inner_mha_cls.output'
-                    if expected_key not in tensor_dict:
-                        raise HTTPException(500, f"Clave de embedding no encontrada para {seq_type}")
+                expected_key = 'blocks.24.inner_mha_cls.output'
+                if expected_key not in tensor_dict:
+                    raise HTTPException(500, f"Clave de embedding no encontrada para {seq_type}")
 
-                    tensor = tensor_dict[expected_key]
-                    print(f"      ✅ Embedding {seq_type}: shape original {tensor.shape}")
-                    
-                    # Promedio por dimensión 1 (longitud de secuencia) y luego flatten
-                    # De (1, seq_len, 8192) -> (1, 8192) -> (8192,)
-                    avg_tensor = np.mean(tensor, axis=1)  # Promedio por tokens
-                    print(f"      📊 Shape después de promedio axis=1: {avg_tensor.shape}")
-                    
-                    flat_tensor = avg_tensor.flatten()   # Flatten para obtener (8192,)
-                    print(f"      📏 Shape después de flatten: {flat_tensor.shape}")
-                    
-                    # Verificación final del tamaño
-                    if len(flat_tensor) != 8192:
-                        raise HTTPException(500, f"Vector final inesperado para {seq_type}: {len(flat_tensor)}, esperado 8192")
-                    
-                    sequence_embeddings.append(flat_tensor)  # Vector de 8192 elementos
-                    print(f"      ✅ Vector {seq_type} agregado: {len(flat_tensor)} elementos")
+                tensor = tensor_dict[expected_key]
+                print(f"      ✅ Embedding {seq_type}: shape original {tensor.shape}")
+                
+                # Promedio por dimensión 1 (longitud de secuencia) y luego flatten
+                # De (1, seq_len, 8192) -> (1, 8192) -> (8192,)
+                avg_tensor = np.mean(tensor, axis=1)  # Promedio por tokens
+                print(f"      📊 Shape después de promedio axis=1: {avg_tensor.shape}")
+                
+                flat_tensor = avg_tensor.flatten()   # Flatten para obtener (8192,)
+                print(f"      📏 Shape después de flatten: {flat_tensor.shape}")
+                
+                # Verificación final del tamaño
+                if len(flat_tensor) != 8192:
+                    raise HTTPException(500, f"Vector final inesperado para {seq_type}: {len(flat_tensor)}, esperado 8192")
+                
+                sequence_embeddings.append(flat_tensor)  # Vector de 8192 elementos
+                print(f"      ✅ Vector {seq_type} agregado: {len(flat_tensor)} elementos")
                 
                 # Promediar los 4 embeddings y concatenar para formar vector de 32768
                 print(f"   🧮 Promediando 4 embeddings...")

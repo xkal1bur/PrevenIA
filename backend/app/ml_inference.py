@@ -40,18 +40,11 @@ class ModelInferenceService:
         # Cargar modelos entrenados (tanto original como PCA)
         self._load_trained_models()
 
-        # ------------------------------------------------------------
-        #  Cargar embedding por defecto (primera fila de target.csv)
-        # ------------------------------------------------------------
-        self.default_embedding: Optional[np.ndarray] = self._load_default_embedding()
-        if self.default_embedding is None or self.default_embedding.shape[0] != 32768:
-            print("[ModelInference] ⚠️ Default embedding could not be loaded or has invalid shape. ML predictions will be disabled.")
-
     def get_predictions_for_patient(self, dni: str, nombres: str, apellidos: str) -> Dict[str, Any]:
         """Obtiene predicciones de los modelos entrenados.
 
         Si no se encuentra un embedding válido o no hay modelos cargados,
-        retrocede al comportamiento de escenarios simulados.
+        retorna un error explícito.
         """
 
         # 1) Verificar que tenemos modelos cargados y un embedding disponible
@@ -65,8 +58,18 @@ class ModelInferenceService:
             print(f"[ModelInference] 🔢 Características esperadas: 32768, encontradas: {embedding.shape[0] if len(embedding.shape) > 0 else 'N/A'}")
             
         if embedding is None or embedding.shape[0] != 32768:
-            print(f"[ModelInference] ⚠️ Embedding inválido para paciente {dni}. Usando embedding por defecto.")
-            embedding = self.default_embedding
+            print(f"[ModelInference] ⚠️ Embedding inválido para paciente {dni}. No se puede realizar predicción.")
+            return {
+                "status": "error",
+                "total_models": 0,
+                "patient_info": {
+                    "dni": dni,
+                    "name": f"{nombres} {apellidos}"
+                },
+                "sample_used": "No disponible",
+                "predictions": {},
+                "description": f"No se encontró un embedding válido para el paciente {nombres} {apellidos} (DNI: {dni})"
+            }
 
         if embedding is not None and embedding.shape[0] == 32768:
             print(f"[ModelInference] ✅ Embedding válido encontrado, procediendo con predicciones...")
@@ -176,9 +179,7 @@ class ModelInferenceService:
         else:
             print(f"[ModelInference] ❌ No hay modelos entrenados cargados")
 
-        # ------------------------------------------------------------------
-        #   Si falla (sin modelos o sin embedding) devolver error explícito
-        # ------------------------------------------------------------------
+        # Si falla (sin modelos o sin embedding) devolver error explícito
         return {
             "status": "error",
             "total_models": 0,
@@ -420,64 +421,8 @@ class ModelInferenceService:
                     print(f"[ModelInference] ✅ PCA transformer cargado desde archivo ({self.pca_transformer.n_components_} componentes)")
                 except Exception as e:
                     print(f"[ModelInference] ❌ Error cargando PCA transformer: {e}")
-            
-            # Si no hay archivo guardado, intentar recrear PCA desde los datos de entrenamiento
-            if not self.pca_transformer:
-            try:
-                embeddings_path = Path(__file__).resolve().parent / "models" / "final_embeddings.npy"
-                if embeddings_path.exists():
-                    from sklearn.decomposition import PCA
-                    from sklearn.preprocessing import StandardScaler
-                    
-                    X = np.load(embeddings_path)
-                        print(f"[ModelInference] 📊 Datos de entrenamiento cargados: {X.shape}")
-                        
-                    if self.scaler:
-                        X_scaled = self.scaler.transform(X)
-                            print(f"[ModelInference] 📊 Después de scaler: {X_scaled.shape}")
-                    else:
-                        scaler_temp = StandardScaler()
-                        X_scaled = scaler_temp.fit_transform(X)
-                            print(f"[ModelInference] 📊 Scaler temporal aplicado: {X_scaled.shape}")
-                        
-                        # Verificar qué número de componentes necesitan los modelos PCA
-                        expected_components = None
-                        for name in pca_models:
-                            model_obj = self.trained_models[name]["model"]
-                            n_features = getattr(model_obj, 'n_features_in_', None)
-                            if n_features:
-                                expected_components = n_features
-                                print(f"[ModelInference] 📊 Modelo {name} espera {n_features} características")
-                                break
-                        
-                        if expected_components:
-                            # Usar el número exacto de componentes que esperan los modelos
-                            pca = PCA(n_components=expected_components, random_state=42)
-                        else:
-                            # Fallback a 0.99 de varianza
-                    pca = PCA(n_components=0.99, random_state=42)
-                        
-                    pca.fit(X_scaled)
-                    self.pca_transformer = pca
-                    print(f"[ModelInference] ✅ PCA transformer creado ({pca.n_components_} componentes)")
-                        
-                        # Guardar el transformer para uso futuro
-                        try:
-                            with open(self.models_dir / "pca_transformer.pk", "wb") as f:
-                                pickle.dump(pca, f)
-                            print(f"[ModelInference] ✅ PCA transformer guardado para uso futuro")
-                        except Exception as e:
-                            print(f"[ModelInference] ⚠️ No se pudo guardar PCA transformer: {e}")
-                else:
-                    print(f"[ModelInference] ⚠️ No se pudo cargar final_embeddings.npy para recrear PCA")
-            except Exception as e:
-                print(f"[ModelInference] ❌ Error creando PCA transformer: {e}")
-            
-            # Si aún no se pudo cargar/crear el PCA transformer, remover modelos PCA
-            if not self.pca_transformer:
-                for name in pca_models:
-                    del self.trained_models[name]
-                    print(f"[ModelInference] ❌ Removido modelo PCA {name} (sin transformer)")
+            else:
+                print(f"[ModelInference] ⚠️ PCA transformer no encontrado en {pca_path}")
 
     def _load_patient_embedding(self, dni: str):
         """Intenta cargar el embedding de un paciente.
@@ -524,43 +469,6 @@ class ModelInferenceService:
                 print(f"[ModelInference] Error descargando embedding de S3: {e}")
                 
         return None
-
-    def _load_default_embedding(self) -> Optional[np.ndarray]:
-        """Carga la primera fila de target.csv como embedding por defecto.
-
-        El archivo se espera en backend/app/models/target.csv. Se descarta la
-        posible columna 'label' en la última posición.
-        """
-        target_path = (Path(__file__).resolve().parent / "models" / "target.csv").resolve()
-        if not target_path.exists():
-            print(f"[ModelInference] ⚠️ target.csv no encontrado en {target_path}")
-            return None
-        try:
-            with open(target_path, "r") as f:
-                lines = [ln.strip() for ln in f.readlines() if ln.strip()]
-            if len(lines) < 2:
-                print("[ModelInference] ⚠️ target.csv no contiene datos suficientes")
-                return None
-
-            header = lines[0].split(",")
-            values = lines[1].split(",")
-
-            # Si la última cabecera es 'label' quitar la columna de las features
-            if header[-1].lower() == "label" and len(values) == len(header):
-                values = values[:-1]
-
-            emb = np.asarray(values, dtype=np.float32)
-            # Si la dimensión es 8192, replicar 4× para obtener 32768
-            if emb.shape[0] == 8192:
-                emb = np.tile(emb, 4)
-
-            if emb.shape[0] != 32768:
-                print(f"[ModelInference] ⚠️ Dimensión de default embedding inesperada: {emb.shape[0]} (esperado 32768)")
-                return None
-            return emb
-        except Exception as e:
-            print(f"[ModelInference] Error leyendo target.csv: {e}")
-            return None
 
 # Instancia global del servicio
 ml_service = ModelInferenceService() 

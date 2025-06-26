@@ -228,32 +228,47 @@ const Perfil: React.FC = () => {
 
   /* ---------- Handlers ---------- */
 
-  /* Selección de FASTA */
+  /* Selección de archivos */
   const handleFileChange = (e: ChangeEvent<HTMLInputElement>) => {
     setUploadMessage('')
     setSelectedFile(e.target.files?.[0] ?? null)
   }
 
-  /* Subir FASTA */
+  /* Subir archivos FASTA y PKL */
   const handleUpload = () => {
     if (!selectedFile) {
       setUploadMessage('Selecciona un archivo')
       return
     }
     const ext = selectedFile.name.split('.').pop()?.toLowerCase() || ''
-    if (!['fasta', 'fa', 'fna'].includes(ext)) {
+    if (!['fasta', 'fa', 'fna', 'pkl'].includes(ext)) {
       setUploadMessage('Formato inválido')
       return
     }
 
     const hdr = tokenHeader()
     const fd = new FormData()
-    fd.append('fasta_file', selectedFile)
+    
+    // Determinar si es un archivo PKL o FASTA
+    const isPklFile = ext === 'pkl'
+    
+    if (isPklFile) {
+      // Para archivos PKL, usar el campo 'file' y el endpoint de upload general
+      fd.append('file', selectedFile)
+      setUploadMessage('⏳ Subiendo embedding...')
+    } else {
+      // Para archivos FASTA, usar el campo 'fasta_file' y el endpoint específico
+      fd.append('fasta_file', selectedFile)
+      setUploadMessage('⏳ Subiendo archivo...')
+    }
 
-    setUploadMessage('⏳ Subiendo archivo...')
+    // Seleccionar el endpoint correcto
+    const uploadEndpoint = isPklFile 
+      ? `http://localhost:8000/pacientes/${dni}/upload_file`
+      : `http://localhost:8000/pacientes/${dni}/upload_fasta`
 
     axios
-      .post(`http://localhost:8000/pacientes/${dni}/upload_fasta`, fd, { headers: hdr })
+      .post(uploadEndpoint, fd, { headers: hdr })
       .then(() =>
         axios.get<{ files: S3File[] }>(`http://localhost:8000/pacientes/${dni}/files`, {
           headers: hdr
@@ -265,16 +280,28 @@ const Perfil: React.FC = () => {
             lastModified: formatDate(f.lastModified)
           }))
         setFiles(filesWithDate)
-        setUploadMessage('✅ Archivo subido correctamente')
+        
+        if (isPklFile) {
+          setUploadMessage('✅ Embedding subido correctamente')
+        } else {
+          setUploadMessage('✅ Archivo subido correctamente')
+        }
         
         // No buscar archivos automáticamente después de subir - solo recargar la lista
         
         // Limpiar el input de archivo
         setSelectedFile(null)
-        const fileInput = document.getElementById('fasta-upload') as HTMLInputElement
+        const fileInput = document.getElementById('file-upload') as HTMLInputElement
         if (fileInput) fileInput.value = ''
       })
-      .catch(() => setUploadMessage('❌ Error al subir archivo'))
+      .catch((error) => {
+        console.error('Error al subir archivo:', error)
+        if (isPklFile) {
+          setUploadMessage('❌ Error al subir embedding')
+        } else {
+          setUploadMessage('❌ Error al subir archivo')
+        }
+      })
   }
 
   /* Descargar FASTA */
@@ -787,7 +814,7 @@ const Perfil: React.FC = () => {
 
               {/* Lista Archivos */}
               <div className="perfil-card files-card">
-                <h4 style={{ marginBottom: '1rem', color: '#2c3e50' }}>📁 Archivos FASTA Subidos</h4>
+                <h4 style={{ marginBottom: '1rem', color: '#2c3e50' }}>📁 Archivos Subidos</h4>
                 <div className="files-box">
                   {files.length === 0 ? (
                     <p style={{ color: '#6c757d', fontStyle: 'italic' }}>No hay archivos cargados.</p>
@@ -804,7 +831,9 @@ const Perfil: React.FC = () => {
                                 {f.chunkCount && <span style={{ color: '#007bff', fontSize: '0.75rem', marginLeft: '0.5rem' }}>({f.chunkCount} archivos)</span>}
                               </>
                             ) : (
-                              <>📄 {f.filename}</>
+                              <>
+                                {f.filename.toLowerCase().endsWith('.pkl') ? '🧠' : '📄'} {f.filename}
+                              </>
                             )}
                           </span>
                           <span className="file-date">{f.lastModified}</span>
@@ -845,14 +874,16 @@ const Perfil: React.FC = () => {
 
             {/* DERECHA: Upload + lista de archivos */}
             <div className="perfil-right">
-              {/* Subir FASTA */}
+              {/* Subir archivos FASTA y PKL */}
               <div className="perfil-card upload-card">
-                <h4 style={{ marginBottom: '1rem', color: '#2c3e50' }}>📤 Subir Archivo FASTA</h4>
+                <h4 style={{ marginBottom: '1rem', color: '#2c3e50' }}>📤 Subir Archivos</h4>
                 
-                <label htmlFor="fasta-upload" className={`upload-box ${selectedFile ? 'file-selected' : ''}`}>
+                <label htmlFor="file-upload" className={`upload-box ${selectedFile ? 'file-selected' : ''}`}>
                   <div className="upload-icon">
                     {selectedFile ? (
-                      <div className="file-icon">📄</div>
+                      <div className="file-icon">
+                        {selectedFile.name.toLowerCase().endsWith('.pkl') ? '🧠' : '📄'}
+                      </div>
                     ) : (
                       <FiUploadCloud size={48} />
                     )}
@@ -862,19 +893,27 @@ const Perfil: React.FC = () => {
                       <>
                         <p className="file-name">{selectedFile.name}</p>
                         <p className="file-size">{(selectedFile.size / 1024).toFixed(1)} KB</p>
+                        <p className="file-type">
+                          {selectedFile.name.toLowerCase().endsWith('.pkl') 
+                            ? '🧠 Archivo de Embedding' 
+                            : '🧬 Archivo de Secuencia'}
+                        </p>
                       </>
                     ) : (
                       <>
-                        <p className="main-text">Arrastra tu archivo FASTA aquí</p>
+                        <p className="main-text">Arrastra tu archivo aquí</p>
                         <p className="sub-text">o haz click para seleccionar</p>
-                        <p className="formats">Formatos: .fasta, .fa, .fna</p>
+                        <p className="formats">
+                          <strong>Secuencias:</strong> .fasta, .fa, .fna<br/>
+                          <strong>Embeddings:</strong> .pkl
+                        </p>
                       </>
                     )}
                   </div>
                   <input
-                    id="fasta-upload"
+                    id="file-upload"
                     type="file"
-                    accept=".fasta,.fa,.fna"
+                    accept=".fasta,.fa,.fna,.pkl"
                     onChange={handleFileChange}
                     className="file-input"
                   />
@@ -897,7 +936,11 @@ const Perfil: React.FC = () => {
                       Procesando...
                     </>
                   ) : selectedFile ? (
-                    <>🚀 Procesar Secuencia</>
+                    selectedFile.name.toLowerCase().endsWith('.pkl') ? (
+                      <>🧠 Subir Embedding</>
+                    ) : (
+                      <>🚀 Procesar Secuencia</>
+                    )
                   ) : (
                     <>Selecciona un archivo</>
                   )}
@@ -1097,12 +1140,14 @@ const Perfil: React.FC = () => {
             >
               ✕
             </button>
-            <PredictionsPanel
-              patientDni={paciente.dni}
-              patientName={`${paciente.nombres} ${paciente.apellidos}`}
-              embeddingFiles={files.filter(f => !f.isFolder && f.filename.toLowerCase().endsWith('.pkl')).map(f => f.filename)}
-              onEmbeddingProcessed={refreshPatientFiles}
-            />
+            <div className="modal-body">
+              <PredictionsPanel
+                patientDni={paciente.dni}
+                patientName={`${paciente.nombres} ${paciente.apellidos}`}
+                embeddingFiles={files.filter(f => !f.isFolder && f.filename.toLowerCase().endsWith('.pkl')).map(f => f.filename)}
+                onEmbeddingProcessed={refreshPatientFiles}
+              />
+            </div>
           </div>
         </div>
       )}
