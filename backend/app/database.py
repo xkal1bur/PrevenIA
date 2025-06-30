@@ -68,7 +68,7 @@ def get_database_url():
         return aurora_url
     
     # Fallback a base de datos local
-    local_url = os.getenv("DATABASE_URL_LOCAL")
+    local_url = os.getenv("DATABASE_URL")
     if local_url:
         print("✅ Usando base de datos local desde DATABASE_URL_LOCAL")
         return local_url
