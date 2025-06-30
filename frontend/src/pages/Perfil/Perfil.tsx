@@ -214,7 +214,7 @@ const Perfil: React.FC = () => {
     if (!dni) return
     const hdr = tokenHeader()
     axios
-      .get<Note[]>(`http://localhost:8000/pacientes/${dni}/notes`, { headers: hdr })
+      .get<Note[]>(`http://52.1.220.84:8000/pacientes/${dni}/notes`, { headers: hdr })
       .then(res =>
         setNotes(
           res.data.map(n => ({
@@ -264,13 +264,13 @@ const Perfil: React.FC = () => {
 
     // Seleccionar el endpoint correcto
     const uploadEndpoint = isPklFile 
-      ? `http://localhost:8000/pacientes/${dni}/upload_file`
-      : `http://localhost:8000/pacientes/${dni}/upload_fasta`
+      ? `http://52.1.220.84:8000/pacientes/${dni}/upload_file`
+      : `http://52.1.220.84:8000/pacientes/${dni}/upload_fasta`
 
     axios
       .post(uploadEndpoint, fd, { headers: hdr })
       .then(() =>
-        axios.get<{ files: S3File[] }>(`http://localhost:8000/pacientes/${dni}/files`, {
+        axios.get<{ files: S3File[] }>(`http://52.1.220.84:8000/pacientes/${dni}/files`, {
           headers: hdr
         })
       )
@@ -364,7 +364,7 @@ const Perfil: React.FC = () => {
     if (!window.confirm(`¿Eliminar ${fn}?`)) return
     const hdr = tokenHeader()
     axios
-      .delete(`http://localhost:8000/pacientes/${dni}/files/${encodeURIComponent(fn)}`, {
+      .delete(`http://52.1.220.84:8000/pacientes/${dni}/files/${encodeURIComponent(fn)}`, {
         headers: hdr
       })
       .then(() => {
@@ -402,7 +402,7 @@ const Perfil: React.FC = () => {
     const folderNameForAPI = folderName.endsWith('/') ? folderName.slice(0, -1) : folderName
     
     axios
-      .delete(`http://localhost:8000/pacientes/${dni}/folders/${encodeURIComponent(folderNameForAPI)}`, {
+      .delete(`http://52.1.220.84:8000/pacientes/${dni}/folders/${encodeURIComponent(folderNameForAPI)}`, {
         headers: hdr
       })
       .then(() => {
@@ -459,7 +459,7 @@ const Perfil: React.FC = () => {
       
       // Primero intentar obtener información de chunks alineados (prioridad)
       try {
-        const alignedChunksInfoRes = await axios.get<PatientChunksInfo>(`http://localhost:8000/pacientes/${dni}/aligned_chunks/info`, { headers: hdr })
+        const alignedChunksInfoRes = await axios.get<PatientChunksInfo>(`http://52.1.220.84:8000/pacientes/${dni}/aligned_chunks/info`, { headers: hdr })
         setPatientChunksInfo(alignedChunksInfoRes.data)
         
         // Generar lista de archivos alineados
@@ -485,7 +485,7 @@ const Perfil: React.FC = () => {
       } catch {
         // Si no hay chunks alineados, intentar chunks normales del paciente
         try {
-          const chunksInfoRes = await axios.get<PatientChunksInfo>(`http://localhost:8000/pacientes/${dni}/patient_chunks/info`, { headers: hdr })
+          const chunksInfoRes = await axios.get<PatientChunksInfo>(`http://52.1.220.84:8000/pacientes/${dni}/patient_chunks/info`, { headers: hdr })
           setPatientChunksInfo(chunksInfoRes.data)
           
           // Generar lista de archivos basada en la información de chunks
@@ -508,7 +508,7 @@ const Perfil: React.FC = () => {
           
         } catch {
           // Si no hay chunks, intentar el método anterior con archivos S3
-          const res = await axios.get<{ files: S3File[] }>(`http://localhost:8000/pacientes/${dni}/files`, { headers: hdr })
+          const res = await axios.get<{ files: S3File[] }>(`http://52.1.220.84:8000/pacientes/${dni}/files`, { headers: hdr })
           
                   // Verificar si hay archivos alineados disponibles
         const hasAlignedChunks = res.data.files.some(f => f.isFolder && f.filename === 'aligned_chunks/' && f.type === 'aligned_sequences')
@@ -550,7 +550,7 @@ const Perfil: React.FC = () => {
     const hdr = tokenHeader()
     axios
       .post<Note>(
-        `http://localhost:8000/pacientes/${dni}/notes`,
+        `http://52.1.220.84:8000/pacientes/${dni}/notes`,
         { title: newTitle, content: newContent },
         { headers: hdr }
       )
@@ -599,7 +599,7 @@ const Perfil: React.FC = () => {
       formData.append('filename', selectedFileForAlignment)
 
       await axios.post(
-        `http://localhost:8000/pacientes/${dni}/align_with_cr13`,
+        `http://52.1.220.84:8000/pacientes/${dni}/align_with_cr13`,
         formData,
         { headers: hdr }
       )
@@ -608,7 +608,7 @@ const Perfil: React.FC = () => {
       
       // Recargar la lista de archivos
       const filesResponse = await axios.get<{ files: S3File[] }>(
-        `http://localhost:8000/pacientes/${dni}/files`,
+        `http://52.1.220.84:8000/pacientes/${dni}/files`,
         { headers: hdr }
       )
       
@@ -624,7 +624,7 @@ const Perfil: React.FC = () => {
       if (hasAlignedChunks) {
         try {
           // Obtener información de los chunks alineados
-          const alignedChunksInfoRes = await axios.get<PatientChunksInfo>(`http://localhost:8000/pacientes/${dni}/aligned_chunks/info`, { headers: hdr })
+          const alignedChunksInfoRes = await axios.get<PatientChunksInfo>(`http://52.1.220.84:8000/pacientes/${dni}/aligned_chunks/info`, { headers: hdr })
           setPatientChunksInfo(alignedChunksInfoRes.data)
           
           // Generar lista de archivos alineados
@@ -705,7 +705,7 @@ const Perfil: React.FC = () => {
       formData.append('filename', selectedFileForEmbedding)
 
       const response = await axios.post(
-        `http://localhost:8000/pacientes/${dni}/process_embedding`,
+        `http://52.1.220.84:8000/pacientes/${dni}/process_embedding`,
         formData,
         { headers: hdr }
       )
@@ -714,7 +714,7 @@ const Perfil: React.FC = () => {
       
       // Recargar la lista de archivos para mostrar el nuevo embedding
       const filesResponse = await axios.get<{ files: S3File[] }>(
-        `http://localhost:8000/pacientes/${dni}/files`,
+        `http://52.1.220.84:8000/pacientes/${dni}/files`,
         { headers: hdr }
       )
       
@@ -787,7 +787,7 @@ const Perfil: React.FC = () => {
                 <img
                   src={
                     paciente.foto
-                      ? `http://localhost:8000/static/pacientes/${paciente.foto}`
+                      ? `http://52.1.220.84:8000/static/pacientes/${paciente.foto}`
                       : '/images/placeholder-person.png'
                   }
                   alt="foto paciente"

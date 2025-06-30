@@ -29,7 +29,7 @@ const Login: React.FC = () => {
     setError('')
 
     try {
-      const response = await fetch('http://localhost:8000/login/doctor', {
+      const response = await fetch('http://52.1.220.84:8000/login/doctor', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ correo: email, password: password }),
