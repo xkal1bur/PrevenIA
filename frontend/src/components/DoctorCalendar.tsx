@@ -25,7 +25,7 @@ const DoctorCalendar: React.FC = () => {
     setLoading(true)
     try {
       const res = await axios.get<Appointment[]>(
-        `http://localhost:8000/calendario/dia/${isoDay}`,
+        `http://52.1.220.84:8000/calendario/dia/${isoDay}`,
         { headers: { Authorization: `Bearer ${token}` } }
       )
       setEvents(prev => ({ ...prev, [isoDay]: res.data }))
@@ -52,7 +52,7 @@ const DoctorCalendar: React.FC = () => {
   const handleCreate = async () => {
     try {
       await axios.post(
-        'http://localhost:8000/calendario/evento',
+        'http://52.1.220.84:8000/calendario/evento',
         {
           fecha_hora: `${dayKey}T${newTime}`,
           asunto: newAsunto,
@@ -71,7 +71,7 @@ const DoctorCalendar: React.FC = () => {
   const handleDelete = async (id: number) => {
     if (!window.confirm('¿Eliminar esta cita?')) return
     try {
-      await axios.delete(`http://localhost:8000/calendario/${id}`, {
+      await axios.delete(`http://52.1.220.84:8000/calendario/${id}`, {
         headers: { Authorization: `Bearer ${token}` },
       })
       loadDay(selectedDate)

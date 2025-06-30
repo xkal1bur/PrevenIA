@@ -1,7 +1,7 @@
 // Configuración de la API
 export const API_CONFIG = {
   // En desarrollo, usar el proxy de Vite
-  BASE_URL: import.meta.env.DEV ? '/api' : 'http://localhost:8000',
+  BASE_URL: import.meta.env.DEV ? '/api' : 'http://52.1.220.84:8000',
   
   // Endpoints específicos
   ENDPOINTS: {

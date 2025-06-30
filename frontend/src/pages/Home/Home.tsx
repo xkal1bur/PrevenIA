@@ -57,7 +57,7 @@ const Home: React.FC = () => {
         return
       }
       try {
-        const r = await axios.get('http://localhost:8000/doctors/me', {
+        const r = await axios.get('http://52.1.220.84:8000/doctors/me', {
           headers: { Authorization: `Bearer ${token}` }
         })
         setDoctorId(r.data.id)
@@ -77,19 +77,19 @@ const Home: React.FC = () => {
     if (doctorId === null) return
     const token = localStorage.getItem('token')
     axios
-      .get<Paciente[]>(`http://localhost:8000/pacientes/doctor/${doctorId}`, {
+      .get<Paciente[]>(`http://52.1.220.84:8000/pacientes/doctor/${doctorId}`, {
         headers: { Authorization: `Bearer ${token}` }
       })
       .then(r => setPacientes(r.data))
       .catch(() => setErrorPacientes('No se pudo cargar la lista'))
     axios
-      .get<ActiveStats>(`http://localhost:8000/pacientes/stats/active_inactive?days=30`, {
+      .get<ActiveStats>(`http://52.1.220.84:8000/pacientes/stats/active_inactive?days=30`, {
         headers: { Authorization: `Bearer ${token}` }
       })
       .then(r => setActiveStats(r.data))
       .catch(() => setActiveStats(null))
     axios
-      .get<BucketUsage>(`http://localhost:8000/stats/bucket_usage`, {
+      .get<BucketUsage>(`http://52.1.220.84:8000/stats/bucket_usage`, {
         headers: { Authorization: `Bearer ${token}` }
       })
       .then(r => setBucketUsage(r.data))

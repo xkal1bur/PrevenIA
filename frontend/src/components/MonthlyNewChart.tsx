@@ -29,7 +29,7 @@ export default function MonthlyNewChart() {
     const token = localStorage.getItem('token')
     axios
       .get<YearsResponse>(
-        'http://localhost:8000/pacientes/stats/years',
+        'http://52.1.220.84:8000/pacientes/stats/years',
         { headers: { Authorization: `Bearer ${token}` } }
       )
       .then(res => {
@@ -49,7 +49,7 @@ export default function MonthlyNewChart() {
     const token = localStorage.getItem('token')
     axios
       .get<StatsResponse>(
-        `http://localhost:8000/pacientes/stats/monthly_new?year=${year}`,
+        `http://52.1.220.84:8000/pacientes/stats/monthly_new?year=${year}`,
         { headers: { Authorization: `Bearer ${token}` } }
       )
       .then(res => {

@@ -67,7 +67,7 @@ const Pacientes: React.FC = () => {
       navigate('/')
       return
     }
-    axios.get('http://localhost:8000/doctors/me', {
+    axios.get('http://52.1.220.84:8000/doctors/me', {
       headers: { Authorization: `Bearer ${token}` },
     })
     .then(resp => {
@@ -88,7 +88,7 @@ const Pacientes: React.FC = () => {
     const token = localStorage.getItem('token')
     if (!token) return
 
-    axios.get<Paciente[]>(`http://localhost:8000/pacientes/doctor/${doctorId}`, {
+    axios.get<Paciente[]>(`http://52.1.220.84:8000/pacientes/doctor/${doctorId}`, {
       headers: { Authorization: `Bearer ${token}` },
     })
     .then(res => setPacientes(res.data))
@@ -123,7 +123,7 @@ const Pacientes: React.FC = () => {
       data.append('doctor_id', doctorId.toString())
 
       const resp = await axios.post<Paciente>(
-        'http://localhost:8000/register/paciente',
+        'http://52.1.220.84:8000/register/paciente',
         data,
         {
           headers: {
@@ -214,7 +214,7 @@ const Pacientes: React.FC = () => {
                     <div className="paciente-photo">
                       {p.foto ? (
                         <img
-                          src={`http://localhost:8000/static/pacientes/${p.foto}`}
+                          src={`http://52.1.220.84:8000/static/pacientes/${p.foto}`}
                           alt={`${p.nombres} ${p.apellidos}`}
                         />
                       ) : (

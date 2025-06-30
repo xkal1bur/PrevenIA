@@ -114,7 +114,7 @@ const DNAViewer: React.FC<DNAViewerProps> = ({
     try {
       const filename = `default_part_${fragmentNumber.toString().padStart(4, '0')}.fasta`
       const response = await axios.get(
-        `http://localhost:8000/split_fasta_files/${encodeURIComponent(filename)}`,
+        `http://52.1.220.84:8000/split_fasta_files/${encodeURIComponent(filename)}`,
         { responseType: 'text' }
       )
       
@@ -158,7 +158,7 @@ const DNAViewer: React.FC<DNAViewerProps> = ({
       }
 
       const response = await axios.get(
-        `http://localhost:8000/pacientes/${patientDni}/files/${encodeURIComponent(filename)}`,
+        `http://52.1.220.84:8000/pacientes/${patientDni}/files/${encodeURIComponent(filename)}`,
         { headers, responseType: 'text' }
       )
       
@@ -292,7 +292,7 @@ const DNAViewer: React.FC<DNAViewerProps> = ({
       const loadReferenceFile = async () => {
         try {
           const res = await axios.get<string>(
-            `http://localhost:8000/split_fasta_files/${encodeURIComponent(referenceFilename)}`,
+            `http://52.1.220.84:8000/split_fasta_files/${encodeURIComponent(referenceFilename)}`,
             { responseType: "text" }
           );
           const seq = extractSequenceFromFasta(res.data);
@@ -405,7 +405,7 @@ const DNAViewer: React.FC<DNAViewerProps> = ({
   const loadRefFiles = useCallback(async () => {
     try {
       const res = await axios.get<{ files: string[] }>(
-        "http://localhost:8000/reference-files"
+        "http://52.1.220.84:8000/reference-files"
       );
       setRefFiles(res.data.files || []);
     } catch (err) {
@@ -429,7 +429,7 @@ const DNAViewer: React.FC<DNAViewerProps> = ({
         const fragmentNumber = fragmentMatch ? parseInt(fragmentMatch[1]) : 1;
         
         const res = await axios.get<string>(
-          `http://localhost:8000/split_fasta_files/${encodeURIComponent(filename)}`,
+          `http://52.1.220.84:8000/split_fasta_files/${encodeURIComponent(filename)}`,
           { responseType: "text" }
         );
         const seq = extractSequenceFromFasta(res.data);
@@ -521,7 +521,7 @@ const DNAViewer: React.FC<DNAViewerProps> = ({
         Authorization: `Bearer ${localStorage.getItem('token') || ''}`
       }
 
-      await axios.post(`http://localhost:8000/pacientes/${patientDni}/upload_fasta`, formData, { headers })
+      await axios.post(`http://52.1.220.84:8000/pacientes/${patientDni}/upload_fasta`, formData, { headers })
 
       alert(`✅ FASTA con mismatches subido a S3 como ${fileName}`)
 
