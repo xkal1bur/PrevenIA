@@ -34,5 +34,13 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
 
+  blast:
+    image: ncbi/blast
+    container_name: blast_tool
+    volumes:
+      - ./blast-data:/blast
+    working_dir: /blast
+    entrypoint: ["tail", "-f", "/dev/null"]  # Para mantener el contenedor corriendo y usarlo desde otros servicios o por exec
+
 volumes:
   postgres_data:
