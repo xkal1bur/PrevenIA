@@ -9,3 +9,7 @@ analysis3
 
 test_alignment
 resources
+/backend/app/blast_db/*.nin
+/backend/app/blast_db/*.njs
+/backend/app/static/pacientes/*.jpg
+/blast-data/
